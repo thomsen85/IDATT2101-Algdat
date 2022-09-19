@@ -75,7 +75,6 @@ class Node:
             
                 while self.data < 1:
                     self.data += 9
-                    print(self.data, "is less than one")
                     self = self.prev
                     
                 self.data -= 1
@@ -84,8 +83,7 @@ class Node:
                 
                 
             buff = self.data - other.data
-            if buff != 0:
-                ans.append(str(buff))
+            ans.append(str(buff))
             
             self = self.prev
             other = other.prev
@@ -94,6 +92,9 @@ class Node:
             ans.append("-")
         if len(ans) == 0:
             ans.append("0")
+
+        while ans[-1] == '0':
+            ans.pop()
 
         return "".join(ans[::-1])
             
