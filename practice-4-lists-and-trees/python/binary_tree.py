@@ -36,7 +36,6 @@ def move_to(pos):
 
 def recursion_draw(n, node, is_left):
     if n < 4 and node is not None:
-        print("Depth: ", n, ", Data:", node.data, ", Is Left: ", is_left)
 
         if is_left:
             turtle.setheading(270 - (75 // (n+1)))
