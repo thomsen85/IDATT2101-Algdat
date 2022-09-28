@@ -3,6 +3,8 @@ use std::io::{BufReader, Read};
 use std::io;
 use std::time::Instant;
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 fn main() {
     let capacity = 13_000_027;
@@ -18,16 +20,22 @@ fn main() {
     }
     let time_taken = clock_1.elapsed().as_millis();
 
-    let mut collicions = 0;
+    let threads = 10;
     let clock_2 = Instant::now();
-    for n in random_vec {
-        collicions += hash_table.insert(n);
-    }
+    let handle = thread::spawn(move || {
+        for i in 0..threads {
+            for n in i*(random_numbers/threads)..(i+1)*(random_numbers/threads) {
+                hash_table.insert(random_vec[n]);
+            }
+        }
+
+    });
+
+    handle.join().unwrap();
     let time_taken_2 = clock_2.elapsed().as_millis();
 
     println!("Build-in time: {} ms", time_taken);
-    println!("Self-buildt time: {} ms", time_taken_2);
-    println!("Collicions: {}", collicions);
+    println!("Self-buildt time: {} ms", time_taken_2)
 }
 
 #[inline]
@@ -39,7 +47,7 @@ fn fasthash(key: u32, capacity: usize) -> usize {
 }
 
 struct HashTable {
-    arr: Vec<Option<u32>>,
+    arr: Arc<Mutex<Vec<Option<u32>>>>,
     capacity: usize
 }
 
@@ -49,34 +57,35 @@ impl HashTable {
         for _ in 0..capacity {
             arr.push(None);
         }
-        HashTable {arr, capacity}
+        HashTable {arr: Arc::new(Mutex::new(arr)), capacity}
     }
 
-    fn insert(&mut self, value: u32) -> u32{
-        let mut collisions = 0;
+    fn insert(&mut self, value: u32) {
         let mut hash = fasthash(value, self.capacity);
-        if self.arr[hash].is_some() {
-            let jump_distance = fasthash(value, 64) + 1;
-            hash = (hash + jump_distance) % self.capacity;
-            collisions += 1;
+        if let Ok(mut lock) = self.arr.clone().lock() {
+            if lock[hash].is_some() {
+                let jump_distance = fasthash(value, 64) + 1;
+                hash = (hash + jump_distance) % self.capacity;
 
-            while self.arr[hash].is_some() {
-                collisions += 1;
-                hash = (hash + jump_distance) % self.capacity
+                while lock[hash].is_some() {
+                    hash = (hash + jump_distance) % self.capacity
+                }
+
+                lock[hash] = Some(value);
+            } else {
+                lock[hash] = Some(value);
             }
-
-            self.arr[hash] = Some(value)
-        } else {
-            self.arr[hash] = Some(value);
         }
-        collisions
     }
+
 
     fn len(&self) -> usize {
         let mut len = 0;
-        for i in &self.arr {
-            if i.is_some() {
-            len += 1;
+        if let Ok(lock) = self.arr.clone().lock() {
+            for i in 0..self.capacity {
+                if lock[i].is_some() {
+                    len += 1;
+                }
             }
         }
         len
