@@ -18,16 +18,17 @@ fn main() {
     }
     let time_taken = clock_1.elapsed().as_millis();
 
-    let mut collicions = 0;
+    let mut collisions = 0;
     let clock_2 = Instant::now();
     for n in random_vec {
-        collicions += hash_table.insert(n);
+        collisions += hash_table.insert(n);
     }
     let time_taken_2 = clock_2.elapsed().as_millis();
 
     println!("Build-in time: {} ms", time_taken);
     println!("Self-buildt time: {} ms", time_taken_2);
-    println!("Collicions: {}", collicions);
+    println!("Collisions: {}", collisions);
+    println!("Load Factor: {:.2}", random_numbers as f64 / capacity as f64)
 }
 
 #[inline]
@@ -56,7 +57,7 @@ impl HashTable {
         let mut collisions = 0;
         let mut hash = fasthash(value, self.capacity);
         if self.arr[hash].is_some() {
-            let jump_distance = fasthash(value, 64) + 1;
+            let jump_distance = (value as usize % 101) + 1;
             hash = (hash + jump_distance) % self.capacity;
             collisions += 1;
 
@@ -76,7 +77,7 @@ impl HashTable {
         let mut len = 0;
         for i in &self.arr {
             if i.is_some() {
-            len += 1;
+                len += 1;
             }
         }
         len

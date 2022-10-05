@@ -8,8 +8,11 @@ fn main() {
     let capacity = 157; 
     
     let mut table = StringKeyHashTable::new(capacity);
+    let mut collisions = 0;
     for name in &names {
-        table.push(name);
+        if table.push(name) {
+            collisions += 1;
+        }     
     }
 
     println!("{} from file, {} in hash table", &names.len(), table.len());
@@ -17,6 +20,9 @@ fn main() {
 
     println!("{:?}", table.get("Vetle Ålesve Nordang"));
     println!("{:?}", table.get("Thomas Svendal"));
+
+    println!("Number of collisions: {}", collisions);
+    println!("Collisions per person: {:.2}", collisions as f64/names.len() as f64);
 }
 
 fn get_names_from_file(path: &str) -> Vec<String> {
@@ -51,15 +57,17 @@ impl StringKeyHashTable {
         Self { arr, capacity}
     }
 
-    fn push(&mut self, name: &str) {
+    fn push(&mut self, name: &str) -> bool{
         let hash = djb2_hash(name) % self.capacity;
         if let Some(list) = &self.arr[hash] {
             list.borrow_mut().push_back(name.to_string());
             println!("Collision with {} at hash {}", name, hash);
+            return true;
         } else {
             let mut linked_list = LinkedList::new();
             linked_list.push_back(name.to_string());
             self.arr[hash] = Some(RefCell::new(linked_list)); 
+            return false;
         }
     }
 
