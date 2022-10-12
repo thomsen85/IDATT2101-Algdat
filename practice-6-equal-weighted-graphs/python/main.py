@@ -3,22 +3,24 @@ import re
 
 def load_graph_from_file(path):
     points = []
+    length = None
+    first_time = True
     with open(path, "r") as f:
-        for line in f.readlines()[1:]:
+        lines = f.readlines() 
+        for line in lines:
             formatted_line = re.sub(r"\s+", " ", line)
             points.append(list(map(lambda x: int(x), formatted_line.strip().split(" "))))
 
-    length = max(max(points, key=lambda x: x[0])[0],
-                 max(points, key=lambda x: x[1])[1])
+            if first_time:
+                length, _ = points.pop()
+                first_time = False
+
     graph = []
-    for _ in range(length + 1):
+    for _ in range(length):
         graph.append([])
 
     for (f, t) in points:
-        if graph[f] is None:
-            graph[f] = [t]
-        else:
-            graph[f].append(t)
+        graph[f].append(t)
     return graph
 
 
@@ -49,6 +51,7 @@ class TarjanSolver:
 
     def get_sccs(self):
         ans = []
+        print(self.sccs)
         if not self.solved:
             self.solve()
 
@@ -85,7 +88,8 @@ class TarjanSolver:
                 self.low[at] = min(self.low[at], self.low[to])
 
         if self.ids[at] == self.low[at]:
-            while node := self.stack.popleft():
+            while len(self.stack) > 0:
+                node = self.stack.popleft()
                 self.visited[node] = False
                 self.sccs[node] = self.scc_count
                 if node == at:
