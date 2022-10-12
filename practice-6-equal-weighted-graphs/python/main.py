@@ -1,11 +1,12 @@
 from collections import deque
-
+import re
 
 def load_graph_from_file(path):
     points = []
     with open(path, "r") as f:
-        for line in f:
-            points.append(list(map(lambda x: int(x), line.strip().split(" "))))
+        for line in f.readlines()[1:]:
+            formatted_line = re.sub(r"\s+", " ", line)
+            points.append(list(map(lambda x: int(x), formatted_line.strip().split(" "))))
 
     length = max(max(points, key=lambda x: x[0])[0],
                  max(points, key=lambda x: x[1])[1])
