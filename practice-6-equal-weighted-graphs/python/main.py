@@ -51,7 +51,6 @@ class TarjanSolver:
 
     def get_sccs(self):
         ans = []
-        print(self.sccs)
         if not self.solved:
             self.solve()
 

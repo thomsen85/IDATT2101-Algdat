@@ -4,3 +4,12 @@ venv/
 .DS_Store
 *.csv
 .idea
+*.txt
+
+# Big files
+vg1
+vg2
+vg3
+vg4
+vg5
+vgSkandinavia
