@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader};
 use std::time::Instant;
+use std::env;
 
 #[derive(Debug)]
 struct WGraph {
@@ -69,46 +70,48 @@ impl PartialOrd for Priority<'_> {
 }
 
 fn main() {
-    const PATHS: [&str; 6] = ["vg1", "vg2", "vg3", "vg4", "vg5", "vgSkandinavia"];
-    for graph_path in PATHS {
-        let graph = new_wgraph(graph_path)
-            .expect(&format!("Could not load graph from file: {}", &graph_path));
-        let length = graph.nodes.len();
-        let source: usize = 1;
+    let args: Vec<String> = env::args().collect();
+    let graph_path = &args[1];
+    let source: usize = args[2].parse().expect("Second agrument must be a number");
 
-        // Starting timer
-        let time = Instant::now();
-        // Running algoritm
-        let (shortest_distances, previous) = djikstra(graph, source);
-        let time_taken = time.elapsed();
+    let graph = new_wgraph(graph_path)
+        .expect(&format!("Could not load graph from file: {}", &graph_path));
+    let length = graph.nodes.len();
 
-        println!("Result For graph {}:", graph_path);
-        if length < 100 {
-            println!("+----------------+----------------+----------------+");
-            println!("|{: <15} | {: <15}| {: <15}|", "Node", "Prev", "Distance");
-            for i in 0..length {
-                if i == source {
-                    println!(
-                        "|{: <15} | {: <15}| {: <15}|",
-                        i, "Start", shortest_distances[i]
-                    )
-                } else if let Some(prev) = previous[i] {
-                    println!(
-                        "|{: <15} | {: <15}| {: <15}|",
-                        i, prev, shortest_distances[i]
-                    )
-                } else {
-                    println!(
-                        "|{: <15} | {: <15}| {: <15}|",
-                        i, "Not Reached", "Not Reached"
-                    )
-                }
+    // Starting timer
+    let time = Instant::now();
+    // Running algoritm
+    let (shortest_distances, previous) = djikstra(graph, source);
+    let time_taken = time.elapsed();
+
+    println!("Result For graph {}:", graph_path);
+    if length < 100 {
+        println!("+{0}+{0}+{0}+", "-".repeat(16));
+        println!("|{: <15} | {: <15}| {: <15}|", "Node", "Prev", "Distance");
+        println!("+{0}+{0}+{0}+", "-".repeat(16));
+        for i in 0..length {
+            if i == source {
+                println!(
+                    "|{: <15} | {: <15}| {: <15}|",
+                    i, "Start", shortest_distances[i]
+                )
+            } else if let Some(prev) = previous[i] {
+                println!(
+                    "|{: <15} | {: <15}| {: <15}|",
+                    i, prev, shortest_distances[i]
+                )
+            } else {
+                println!(
+                    "|{: <15} | {: <15}| {: <15}|",
+                    i, "Not Reached", "Not Reached"
+                )
             }
-            println!("+----------------+----------------+----------------+");
-        } else {
-            println!("Took {} ms", time_taken.as_micros() as f64 / 1000.0);
         }
+        println!("+{0}+{0}+{0}+", "-".repeat(16));
+    } else {
+        println!("Took {} ms", time_taken.as_micros() as f64 / 1000.0);
     }
+
 }
 
 fn djikstra(graph: WGraph, source: usize) -> (Vec<usize>, Vec<Option<usize>>) {
