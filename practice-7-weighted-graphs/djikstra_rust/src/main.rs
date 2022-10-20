@@ -116,7 +116,7 @@ fn djikstra(graph: WGraph, source: usize) -> (Vec<usize>, Vec<Option<usize>>) {
     let length = graph.nodes.len();
     let mut shortest_distances = vec![usize::MAX / 2; length];
     let mut previous: Vec<Option<usize>> = vec![None; length];
-    let mut priority_queue: BinaryHeap<Priority> = BinaryHeap::with_capacity(length);
+    let mut priority_queue: BinaryHeap<Priority> = BinaryHeap::new();
     shortest_distances[source] = 0;
 
     // Push source variable
