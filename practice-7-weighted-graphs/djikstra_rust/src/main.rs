@@ -1,19 +1,14 @@
-
-use std::cmp::{Ord, Ordering, Reverse};
-use std::collections::{BinaryHeap, binary_heap};
+use std::cmp::{Ord, Ordering};
+use std::collections::BinaryHeap;
 use std::fs::File;
 use std::io;
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader};
 use std::time::Instant;
-
-struct PrioirtyQueue {
-
-}
 
 #[derive(Debug)]
 struct WGraph {
-   // Neighbour list
-   nodes: Vec<Vec<EdgeTo>>
+    // Neighbour list
+    nodes: Vec<Vec<EdgeTo>>,
 }
 
 impl WGraph {
@@ -22,7 +17,7 @@ impl WGraph {
         for _ in 0..amount_of_nodes {
             nodes.push(Vec::new());
         }
-        Self {nodes}
+        Self { nodes }
     }
 }
 
@@ -34,9 +29,8 @@ struct EdgeTo {
 
 impl EdgeTo {
     fn new(to: usize, weight: usize) -> Self {
-        Self {to, weight}
+        Self { to, weight }
     }
-
 }
 
 impl Ord for EdgeTo {
@@ -54,7 +48,11 @@ struct Priority<'a> {
 
 impl<'a> Priority<'a> {
     fn new(number: usize, cost: usize, nodes: &'a Vec<EdgeTo>) -> Self {
-        Self {number, nodes, cost}
+        Self {
+            number,
+            nodes,
+            cost,
+        }
     }
 }
 
@@ -70,47 +68,40 @@ impl PartialOrd for Priority<'_> {
     }
 }
 
-
-fn main(){
-    const paths: [&str; 6] = ["vg1", "vg2", "vg3", "vg4",  "vg5", "vgSkandinavia"];
-    // Load graph
-    for graph_path in paths {
-        let graph = new_wgraph(graph_path).expect("Could not load graph from file");
+fn main() {
+    const PATHS: [&str; 6] = ["vg1", "vg2", "vg3", "vg4", "vg5", "vgSkandinavia"];
+    for graph_path in PATHS {
+        let graph = new_wgraph(graph_path)
+            .expect(&format!("Could not load graph from file: {}", &graph_path));
         let length = graph.nodes.len();
         let source: usize = 1;
 
-        // Init variables
-        let mut shortest_distances = vec![usize::MAX/2; length]; 
-        let mut previous: Vec<Option<usize>> = vec![None; length];
-        let mut priority_queue: BinaryHeap<Priority> = BinaryHeap::with_capacity(length);
-        shortest_distances[source] = 0;
-
-        // Push source variable
-        priority_queue.push(Priority::new(source, 0, &graph.nodes[source]));
+        // Starting timer
         let time = Instant::now();
-
-        while let Some(priority) = priority_queue.pop() {
-            for neighbour in priority.nodes {
-                let alt = shortest_distances[priority.number] + neighbour.weight;
-                if alt < shortest_distances[neighbour.to] {
-                    shortest_distances[neighbour.to] = alt;
-                    previous[neighbour.to] = Some(priority.number);
-                    priority_queue.push(Priority::new(neighbour.to, alt, &graph.nodes[neighbour.to]));
-                }
-            }
-        }
+        // Running algoritm
+        let (shortest_distances, previous) = djikstra(graph, source);
         let time_taken = time.elapsed();
+
         println!("Result For graph {}:", graph_path);
         if length < 100 {
             println!("+----------------+----------------+----------------+");
-            println!("|{: <15} | {: <15}| {: <15}|","Node", "Prev", "Distance");
+            println!("|{: <15} | {: <15}| {: <15}|", "Node", "Prev", "Distance");
             for i in 0..length {
                 if i == source {
-                    println!("|{: <15} | {: <15}| {: <15}|", i, "Start", shortest_distances[i])
-                } else if let Some(prev) = previous[i]  {
-                    println!("|{: <15} | {: <15}| {: <15}|", i, prev, shortest_distances[i])
-                }  else {
-                    println!("|{: <15} | {: <15}| {: <15}|", i, "Not Reached", "Not Reached")
+                    println!(
+                        "|{: <15} | {: <15}| {: <15}|",
+                        i, "Start", shortest_distances[i]
+                    )
+                } else if let Some(prev) = previous[i] {
+                    println!(
+                        "|{: <15} | {: <15}| {: <15}|",
+                        i, prev, shortest_distances[i]
+                    )
+                } else {
+                    println!(
+                        "|{: <15} | {: <15}| {: <15}|",
+                        i, "Not Reached", "Not Reached"
+                    )
                 }
             }
             println!("+----------------+----------------+----------------+");
@@ -118,45 +109,52 @@ fn main(){
             println!("Took {} ms", time_taken.as_micros() as f64 / 1000.0);
         }
     }
-
-
-    /*
-    let starting_node = 1;
-    for node in &graph.nodes[starting_node] {
-        priority_queue.push(node)
-    }
-
-    println!("{:?}", priority_queue);
-    while priority_queue.len() > 0 {
-        let node = priority_queue.pop().unwrap();
-        length 
-        if shortest_distances[node.to] > node.weight {
-            shortest_distances[node.to] = node.weight
-        }
-        
-    }
-    */
-   
 }
 
-fn new_wgraph(path: &str) -> io::Result<WGraph>{
+fn djikstra(graph: WGraph, source: usize) -> (Vec<usize>, Vec<Option<usize>>) {
+    // Init variables
+    let length = graph.nodes.len();
+    let mut shortest_distances = vec![usize::MAX / 2; length];
+    let mut previous: Vec<Option<usize>> = vec![None; length];
+    let mut priority_queue: BinaryHeap<Priority> = BinaryHeap::with_capacity(length);
+    shortest_distances[source] = 0;
+
+    // Push source variable
+    priority_queue.push(Priority::new(source, 0, &graph.nodes[source]));
+
+    while let Some(priority) = priority_queue.pop() {
+        for neighbour in priority.nodes {
+            let alt = shortest_distances[priority.number] + neighbour.weight;
+            if alt < shortest_distances[neighbour.to] {
+                shortest_distances[neighbour.to] = alt;
+                previous[neighbour.to] = Some(priority.number);
+                priority_queue.push(Priority::new(neighbour.to, alt, &graph.nodes[neighbour.to]));
+            }
+        }
+    }
+    (shortest_distances, previous)
+}
+
+fn new_wgraph(path: &str) -> io::Result<WGraph> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
-    let lines: Vec<String> = reader.lines().into_iter()
-                .map(|line| 
-                    line.expect("Failed to read line"))
-                .collect();
-            
+    let lines: Vec<String> = reader
+        .lines()
+        .into_iter()
+        .map(|line| line.expect("Failed to read line"))
+        .collect();
+
     let first_line: Vec<&str> = lines[0].split_whitespace().collect();
     let nodes: usize = first_line[0].parse().expect("File not formated correctly");
     let edges: usize = first_line[1].parse().expect("File not formated correctly");
 
     let mut graph = WGraph::with_nodes(nodes);
     for i in 1..=edges {
-        let data: Vec<usize> = lines[i].split_whitespace()
-                    .map(|c| c.parse().expect("File not formated correctly"))
-                    .collect();
+        let data: Vec<usize> = lines[i]
+            .split_whitespace()
+            .map(|c| c.parse().expect("File not formated correctly"))
+            .collect();
 
         graph.nodes[data[0]].push(EdgeTo::new(data[1], data[2]));
     }
