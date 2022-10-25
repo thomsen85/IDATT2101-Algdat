@@ -77,6 +77,7 @@ fn main() {
     let graph = new_wgraph(graph_path)
         .expect(&format!("Could not load graph from file: {}", &graph_path));
     let length = graph.nodes.len();
+    let length = graph.nodes.len();
 
     // Starting timer
     let time = Instant::now();
@@ -85,7 +86,7 @@ fn main() {
     let time_taken = time.elapsed();
 
     println!("Result For graph {}:", graph_path);
-    if length < 100 {
+    if length < 100000 {
         println!("+{0}+{0}+{0}+", "-".repeat(16));
         println!("|{: <15} | {: <15}| {: <15}|", "Node", "Prev", "Distance");
         println!("+{0}+{0}+{0}+", "-".repeat(16));
@@ -148,9 +149,12 @@ fn new_wgraph(path: &str) -> io::Result<WGraph> {
         .map(|line| line.expect("Failed to read line"))
         .collect();
 
+
     let first_line: Vec<&str> = lines[0].split_whitespace().collect();
     let nodes: usize = first_line[0].parse().expect("File not formated correctly");
     let edges: usize = first_line[1].parse().expect("File not formated correctly");
+    println!("{} - {}", lines.len(), edges+1);
+    assert!(lines.len() == edges + 1);
 
     let mut graph = WGraph::with_nodes(nodes);
     for i in 1..=edges {
