@@ -4,8 +4,11 @@ venv/
 .DS_Store
 *.csv
 .idea
-*.txt
 
+*.txt
+*.pdf
+*.lyx
+*.bin
 # Big files
 vg1
 vg2
@@ -13,3 +16,6 @@ vg3
 vg4
 vg5
 vgSkandinavia
+enwik8
+
+
