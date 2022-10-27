@@ -1,42 +1,14 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{BufReader, Read, BufWriter, Write};
 use std::env;
 use std::fs::File;
+use std::rc::Rc;
 
 // Using 3 bytes as as indicator 3*8 = 24 bits 
 static SEARCH_WINDOW_BITS: u8 = 11; // 11 for backref: 2^11 = 2048
 static LOOK_AHEAD_BITS: u8 = 5; // 5 for looka ahead: 2^5 = 32
-static DISTANCE_BITS: u8 =   8; // 8 for distance unitl next : 2^8 = 256
-
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Please (only) path as argument");
-        std::process::exit(0)
-    }
-    let path = &args[1];
-
-    println!("Opening File...");
-    let bytes = get_file_as_bytes(path);
-
-    println!("Encoding File...");
-    let encoded_bytes = lz_encode(&bytes);
-    //println!("encoded_bytes: {:?}", encoded_bytes);
-
-    println!("Writing to File...");
-    write_file_as_bytes("out.bin", &encoded_bytes);
-
-    println!("Decoding File...");
-    let decoded_bytes = lz_decode(&encoded_bytes);
-    //println!("decoded_bytes: {:?}", decoded_bytes);
-
-    println!("Checking Decoded File...");
-    assert_eq!(bytes.len(), decoded_bytes.len());
-    for i in 0..decoded_bytes.len() {
-        //println!("{}: {}-{}", i, bytes[i], decoded_bytes[i]);
-        assert_eq!(bytes[i], decoded_bytes[i], "Wrong at index {}", i);
-    }
-    println!("Successfully compressed with lz.");
-}
+static DISTANCE_BITS: u8 = 8; // 8 for distance unitl next : 2^8 = 256
 
 fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; 3] {
     let mut num: u32 = 0x00;
@@ -233,4 +205,108 @@ fn write_file_as_bytes(path: &str, bytes: &Vec<u8>) {
     let file = File::create(path).expect("File could not be created");
     let mut writer = BufWriter::new(file);
     writer.write(bytes).expect("File could not be written");
+}
+
+fn hc_encode(bytes: &Vec<u8>) {
+    let mut frequency_list: Vec<u32> = vec![0_u32; u8::MAX as usize + 1];
+    bytes.iter().for_each(|byte| {
+        frequency_list[byte.to_owned() as usize] += 1;
+    });
+
+    let mut sorted_freq_list: Vec<(u8, u32)> = frequency_list.iter()
+                .enumerate()
+                .map(|(byte, freq)|(byte as u8, freq.to_owned()))
+                .filter(|item| item.1 != 0)
+                .collect();
+    sorted_freq_list.sort_by(|a, b| b.1.cmp(&a.1));
+    println!("{:?}", sorted_freq_list);
+
+
+}
+
+struct Tree {
+    root_node: Node
+}
+
+impl Tree {
+    fn new(root_node: Node) -> Self {
+        Self { root_node }
+    }
+}
+
+struct Node {
+    left: Option<Rc<RefCell<Node>>>,
+    right: Option<Rc<RefCell<Node>>>,
+    frequency: u32,
+    value: Option<u8>, 
+}
+
+impl Node {
+    fn new_bottom_node(frequency: u32, value: Option<u8>) -> Self{
+        Self { left: None, right: None, frequency, value }
+    }
+
+    fn new_intermidiate_node(left: Node, right: Node) -> Self {
+        Self {left: Some(Rc::new(RefCell::new(left))), right: Some(Rc::new(RefCell::new(right))), frequency: left.frequency + right.frequency, value: None }
+    }
+
+}
+
+/// Frequency list must be sorted 
+fn frequency_list_to_huffman_tree(frequency_list: &Vec<(u8, u32)>) -> Tree {
+    loop {
+        let (first_value, first_freq) = frequency_list.pop().unwrap();
+        let first_node = Node::new_bottom_node(first_value, first_freq);
+
+        if frequency_list.is_empty() {
+            
+            break
+        }
+
+        let (second_value, second_freq) = frequency_list.pop();
+        if frequency_list.is_empty() {
+            break
+        }
+    }
+}
+
+fn rec(frequency_list: &Vec<(u8, u32)>) -> Node {
+    frequency_list.pop() 
+    return Node::new_intermidiate_node(rec, rec)
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Please (only) path as argument");
+        std::process::exit(0)
+    }
+    let path = &args[1];
+
+    println!("Opening File...");
+    let bytes = get_file_as_bytes(path);
+    
+    hc_encode(&bytes)
+
+
+    // println!("Encoding File with LZ...");
+    // let encoded_bytes = lz_encode(&bytes);
+    // //println!("encoded_bytes: {:?}", encoded_bytes);
+
+    // println!("Writing to File...");
+    // write_file_as_bytes("out.bin", &encoded_bytes);
+
+    // println!("Decoding File...");
+    // let decoded_bytes = lz_decode(&encoded_bytes);
+    // //println!("decoded_bytes: {:?}", decoded_bytes);
+
+    // println!("Checking Decoded File...");
+    // assert_eq!(bytes.len(), decoded_bytes.len());
+    // for i in 0..decoded_bytes.len() {
+    //     //println!("{}: {}-{}", i, bytes[i], decoded_bytes[i]);
+    //     assert_eq!(bytes[i], decoded_bytes[i], "Wrong at index {}", i);
+    // }
+    // println!("Successfully compressed with lz.");
+
+
 }
