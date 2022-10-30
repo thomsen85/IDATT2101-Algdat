@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::io::{BufReader, Read, BufWriter, Write};
+use std::io::{BufReader, Read, BufWriter, Write, self};
 use std::env;
 use std::fs::File;
 use std::rc::Rc;
@@ -20,7 +20,7 @@ fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) ->
 
     num |= distance_to_next; 
     num |= length << DISTANCE_BITS;   
-    num |= back_ref << DISTANCE_BITS + LOOK_AHEAD_BITS;
+    num |= back_ref << (DISTANCE_BITS + LOOK_AHEAD_BITS);
 
     let b1: u8 = ((num >> 24) & 0xff) as u8;
     let b2: u8 = ((num >> 16) & 0xff) as u8;
@@ -39,7 +39,7 @@ fn get_data_from_indicator(indicator: &[u8; INDICATOR_BYTE]) -> (usize , usize, 
 
     let distance_to_next = num & (2_usize.pow(DISTANCE_BITS as u32) - 1);
     let length   = (num >> DISTANCE_BITS) & (2_usize.pow(LOOK_AHEAD_BITS as u32) - 1);
-    let back_ref = (num >> DISTANCE_BITS + LOOK_AHEAD_BITS) & (2_usize.pow((SEARCH_WINDOW_BITS) as u32) - 1);
+    let back_ref = (num >> (DISTANCE_BITS + LOOK_AHEAD_BITS)) & (2_usize.pow((SEARCH_WINDOW_BITS) as u32) - 1);
     (back_ref, length, distance_to_next)
 }
 
@@ -72,13 +72,11 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
     while split < bytes.len() {
         let (back_ref, length) = find_match_in_window(bytes, split, SEARCH_WINDOW_BITS, LOOK_AHEAD_BITS);
         if length > 3 {
-            //println!("Match found at: {}, back: {}, length:{}", split, back_ref, length);
             if first {
                 output.extend(get_byte_array_from_u16(split as u16));
                 first = false; 
             } else {
                 let indicator = get_indicator_from_data(prev_pointer as u32, prev_length, distance);
-                //println!("Creating referance at {}, to: {}, length: {}", split, prev_pointer,  prev_length);
                 output.extend(indicator);
             }
             output.extend(&bytes[buffer_start..buffer_end]);
@@ -95,7 +93,6 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
     }
 
     let indicator = get_indicator_from_data(prev_pointer as u32, prev_length, distance);
-    //println!("Creating referance at {}, to: {}, length: {}", split, prev_pointer,  prev_length);
     output.extend(indicator);
         
     output.extend(&bytes[buffer_start..buffer_end]); 
@@ -105,7 +102,6 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
 
 fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
     let first_start = get_u16_from_byte_array(&[bytes[0], bytes[1]]) as usize ;
-    //println!("First at {}", first_start);
     let mut output = Vec::new();
     let mut start_pointer  = 2;
     let mut bytes_end_pointer = first_start + start_pointer;
@@ -119,12 +115,8 @@ fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
         let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3]];
         let (back_ref, length, distance_to_next) = get_data_from_indicator(&indicator);
         
-        //println!("output_pointer =  {}",output_end_pointer);
         // Coping data
-        println!("{} - {}", output_end_pointer, back_ref);
         output.extend_from_within((output_end_pointer - back_ref)..(output_end_pointer + length - back_ref ));
-        //println!("Adding ref to outbut buffer, output now {:?}", output);
-
 
         start_pointer = bytes_end_pointer + 4;
         bytes_end_pointer = start_pointer + distance_to_next;
@@ -142,7 +134,7 @@ fn find_match_in_window(bytes:&Vec<u8>, split: usize, search_window_bits: u8, lo
     }
     let mut search_pointer = split - 1;     
     let search_pointer_end: usize = 
-        if 2_usize.pow(search_window_bits as u32) - 1 >= split {
+        if 2_usize.pow(search_window_bits as u32) > split {
             0_usize
         } else {
             split - (2_usize.pow(search_window_bits as u32) - 1)
@@ -204,10 +196,10 @@ fn get_file_as_bytes(path: &str) -> Vec<u8> {
     buffer
 }
 
-fn write_file_as_bytes(path: &str, bytes: &Vec<u8>) {
+fn write_file_as_bytes(path: &str, bytes: &[u8]) -> io::Result<usize>{
     let file = File::create(path).expect("File could not be created");
     let mut writer = BufWriter::new(file);
-    writer.write(bytes).expect("File could not be written");
+    writer.write(bytes)
 }
 
 fn hc_encode(bytes: &Vec<u8>) -> Vec<u8>{
@@ -253,7 +245,7 @@ fn get_u32_from_byte_array(bytes: &[u8 ;4]) -> u32 {
 fn hc_decode(bytes: &Vec<u8>) -> Vec<u8> {
     let length = bytes[0] as usize + 1;
 
-    let mut freq_list: Vec<(u8, u32)> = Vec::with_capacity(length.into());
+    let mut freq_list: Vec<(u8, u32)> = Vec::with_capacity(length);
     for i in 0..length {
         let base = 1 + (i*5) as usize;
         let val = bytes[base];
@@ -263,8 +255,7 @@ fn hc_decode(bytes: &Vec<u8>) -> Vec<u8> {
 
     let tree = frequency_list_to_huffman_tree(&freq_list);
     
-    let res = tree.get_decode_bytes(&bytes, (1 + 5*length)*8);
-    res
+    tree.get_decode_bytes(bytes, (1 + 5*length)*8)
 
 }
 struct BitBuilder {
@@ -372,12 +363,11 @@ impl Tree {
 
 }
 
-fn get_bit(bytes: &Vec<u8>, index: usize) -> bool {
+fn get_bit(bytes: &[u8], index: usize) -> bool {
     let byte = bytes[index / 8];
     let index = index % 8;
-    let result = byte >> (7 - index) & 1 != 0; 
 
-    result
+    byte >> (7 - index) & 1 != 0 
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -412,8 +402,7 @@ impl PartialOrd for Node {
     }
 }
 
-/// Frequency list must be sorted 
-fn frequency_list_to_huffman_tree(frequency_list: &Vec<(u8, u32)>) -> Tree {
+fn frequency_list_to_huffman_tree(frequency_list: &[(u8, u32)]) -> Tree {
     let mut heap = BinaryHeap::new();
     frequency_list.iter().for_each(|o| {
         heap.push(Node::new_bottom_node(o.1, Some(o.0)));
@@ -445,7 +434,9 @@ fn main() {
     let hc_encoded = hc_encode(&lz_encoded);
 
     println!("Writing bytes to file...");
-    write_file_as_bytes("out.bin", &hc_encoded);
+    if write_file_as_bytes("out.bin", &hc_encoded).is_err() {
+        println!("Error writing to file");
+    }
 
     println!("Decoding bytes...");
     let hc_decoded_bytes = hc_decode(&hc_encoded);
@@ -455,7 +446,6 @@ fn main() {
     println!("Checking decoded bytes...");
     assert_eq!(bytes.len(), lz_decoded_bytes.len());
     for i in 0..lz_decoded_bytes.len() {
-        //println!("{}: {}-{}", i, bytes[i], lz_decoded_bytes[i]);
         assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i);
     }
     println!("Successfully compressed and decompressed.");
