@@ -4,15 +4,14 @@ use std::collections::BinaryHeap;
 use std::io::{BufReader, Read, BufWriter, Write};
 use std::env;
 use std::fs::File;
-use std::ops::Index;
 use std::rc::Rc;
 
-// Using 3 bytes as as indicator 3*8 = 24 bits 
-static SEARCH_WINDOW_BITS: u8 = 11; // 11 for backref: 2^11 = 2048
-static LOOK_AHEAD_BITS: u8 = 5; // 5 for looka ahead: 2^5 = 32
+const INDICATOR_BYTE: usize = 4;
+static SEARCH_WINDOW_BITS: u8 = 15; // 11 for backref: 2^15 = 32768
+static LOOK_AHEAD_BITS: u8 = 9; // 5 for looka ahead: 2^9 = 512
 static DISTANCE_BITS: u8 = 8; // 8 for distance unitl next : 2^8 = 256
 
-fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; 3] {
+fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; INDICATOR_BYTE] {
     let mut num: u32 = 0x00;
     
     assert!(distance_to_next < 2_u32.pow(DISTANCE_BITS as u32));
@@ -23,17 +22,20 @@ fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) ->
     num |= length << DISTANCE_BITS;   
     num |= back_ref << DISTANCE_BITS + LOOK_AHEAD_BITS;
 
+    let b1: u8 = ((num >> 24) & 0xff) as u8;
     let b2: u8 = ((num >> 16) & 0xff) as u8;
     let b3: u8 = ((num >> 8) & 0xff) as u8;
     let b4: u8 = (num & 0xff) as u8;
-    [b2, b3, b4]
+    [b1, b2, b3, b4]
 }
 
-fn get_data_from_indicator(indicator: &[u8; 3]) -> (usize , usize, usize){
-    let mut num: usize= 0x00;
-    num |= indicator[2] as usize;
-    num |= (indicator[1] as usize) << 8;
-    num |= (indicator[0] as usize) << 16;
+fn get_data_from_indicator(indicator: &[u8; INDICATOR_BYTE]) -> (usize , usize, usize){
+    let mut num: usize = 0;
+    num |= indicator[3] as usize;
+    num |= (indicator[2] as usize) << 8;
+    num |= (indicator[1] as usize) << 16;
+    num |= (indicator[0] as usize) << 24;
+
 
     let distance_to_next = num & (2_usize.pow(DISTANCE_BITS as u32) - 1);
     let length   = (num >> DISTANCE_BITS) & (2_usize.pow(LOOK_AHEAD_BITS as u32) - 1);
@@ -112,20 +114,19 @@ fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
         // Adding raw bytes
         output.extend(&bytes[start_pointer..bytes_end_pointer]);
         let output_end_pointer = output.len(); 
-        //println!("Adding raw to output buffer {:?}", &bytes[start_pointer..bytes_end_pointer]);
 
         // Fetching indicator
-        let indicator: [u8; 3] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2]];
+        let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3]];
         let (back_ref, length, distance_to_next) = get_data_from_indicator(&indicator);
-        //println!("At {}, Indicator {:?}", bytes_end_pointer, (back_ref, length, distance_to_next));
         
         //println!("output_pointer =  {}",output_end_pointer);
         // Coping data
-        output.extend_from_within((output_end_pointer - back_ref)..(output_end_pointer - back_ref + length));
+        println!("{} - {}", output_end_pointer, back_ref);
+        output.extend_from_within((output_end_pointer - back_ref)..(output_end_pointer + length - back_ref ));
         //println!("Adding ref to outbut buffer, output now {:?}", output);
 
 
-        start_pointer = bytes_end_pointer + 3;
+        start_pointer = bytes_end_pointer + 4;
         bytes_end_pointer = start_pointer + distance_to_next;
     }
     output.extend(&bytes[start_pointer..bytes_end_pointer]);
