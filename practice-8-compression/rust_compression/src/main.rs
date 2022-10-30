@@ -1,42 +1,16 @@
+use std::cell::RefCell;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use std::io::{BufReader, Read, BufWriter, Write};
 use std::env;
 use std::fs::File;
+use std::ops::Index;
+use std::rc::Rc;
 
 // Using 3 bytes as as indicator 3*8 = 24 bits 
 static SEARCH_WINDOW_BITS: u8 = 11; // 11 for backref: 2^11 = 2048
 static LOOK_AHEAD_BITS: u8 = 5; // 5 for looka ahead: 2^5 = 32
-static DISTANCE_BITS: u8 =   8; // 8 for distance unitl next : 2^8 = 256
-
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Please (only) path as argument");
-        std::process::exit(0)
-    }
-    let path = &args[1];
-
-    println!("Opening File...");
-    let bytes = get_file_as_bytes(path);
-
-    println!("Encoding File...");
-    let encoded_bytes = lz_encode(&bytes);
-    //println!("encoded_bytes: {:?}", encoded_bytes);
-
-    println!("Writing to File...");
-    write_file_as_bytes("out.bin", &encoded_bytes);
-
-    println!("Decoding File...");
-    let decoded_bytes = lz_decode(&encoded_bytes);
-    //println!("decoded_bytes: {:?}", decoded_bytes);
-
-    println!("Checking Decoded File...");
-    assert_eq!(bytes.len(), decoded_bytes.len());
-    for i in 0..decoded_bytes.len() {
-        //println!("{}: {}-{}", i, bytes[i], decoded_bytes[i]);
-        assert_eq!(bytes[i], decoded_bytes[i], "Wrong at index {}", i);
-    }
-    println!("Successfully compressed with lz.");
-}
+static DISTANCE_BITS: u8 = 8; // 8 for distance unitl next : 2^8 = 256
 
 fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; 3] {
     let mut num: u32 = 0x00;
@@ -233,4 +207,255 @@ fn write_file_as_bytes(path: &str, bytes: &Vec<u8>) {
     let file = File::create(path).expect("File could not be created");
     let mut writer = BufWriter::new(file);
     writer.write(bytes).expect("File could not be written");
+}
+
+fn hc_encode(bytes: &Vec<u8>) -> Vec<u8>{
+    let mut frequency_list: Vec<u32> = vec![0_u32; u8::MAX as usize + 1];
+    bytes.iter().for_each(|byte| {
+        frequency_list[byte.to_owned() as usize] += 1;
+    });
+
+    let freq_list: Vec<(u8, u32)> = frequency_list.iter()
+                .enumerate()
+                .map(|(byte, freq)|(byte as u8, freq.to_owned()))
+                .filter(|item| item.1 != 0)
+                .collect();
+
+
+    let tree = frequency_list_to_huffman_tree(&freq_list);
+
+    let mut bit_builder = BitBuilder::new();
+    bit_builder.add_byte((freq_list.len() - 1) as u8);
+    for freq_item in freq_list {
+        bit_builder.add_byte(freq_item.0);
+        bit_builder.add_u32(freq_item.1)
+    }
+
+    for byte in bytes {
+        bit_builder.extend(tree.get_encoded_bit_array_from_byte(byte.to_owned()))
+    }
+
+    bit_builder.collect()
+}
+
+fn get_u32_from_byte_array(bytes: &[u8 ;4]) -> u32 {
+    let mut num = 0;
+
+    num |= bytes[3] as u32;
+    num |= (bytes[2] as u32) << 8;
+    num |= (bytes[1] as u32) << 16;
+    num |= (bytes[0] as u32) << 24;
+
+    num
+}
+
+fn hc_decode(bytes: &Vec<u8>) -> Vec<u8> {
+    let length = bytes[0] as usize + 1;
+
+    let mut freq_list: Vec<(u8, u32)> = Vec::with_capacity(length.into());
+    for i in 0..length {
+        let base = 1 + (i*5) as usize;
+        let val = bytes[base];
+        let freq = get_u32_from_byte_array(&[bytes[base+1], bytes[base+2], bytes[base+3], bytes[base+4]]);
+        freq_list.push((val, freq));
+    }
+
+    let tree = frequency_list_to_huffman_tree(&freq_list);
+    
+    let res = tree.get_decode_bytes(&bytes, (1 + 5*length)*8);
+    res
+
+}
+struct BitBuilder {
+    bytes: Vec<u8>, 
+    buffer_byte: u8,
+    bit_pos: u8,
+}
+
+impl BitBuilder {
+    fn new() -> Self {
+        Self { bytes:Vec::new(), buffer_byte: 0, bit_pos: 0}
+    }
+
+    fn extend(&mut self, bits: &Vec<bool>) {
+        for bit in bits {
+            if self.bit_pos >= 8 {
+                self.bit_pos = 0;
+                self.bytes.push(self.buffer_byte);
+                self.buffer_byte = 0; 
+            } 
+            
+            if *bit {
+                self.buffer_byte |= 1 << (7 - self.bit_pos)
+            }
+
+            self.bit_pos += 1
+        }
+    }
+
+    fn add_byte(&mut self, byte: u8) {
+        self.bytes.push(byte);
+    }
+
+    fn add_u32(&mut self, input: u32) {
+        let b1: u8 = ((input >> 24) & 0xff) as u8;
+        let b2: u8 = ((input >> 16) & 0xff) as u8;
+        let b3: u8 = ((input >> 8) & 0xff) as u8;
+        let b4: u8 = (input & 0xff) as u8;
+
+        self.add_byte(b1);
+        self.add_byte(b2);
+        self.add_byte(b3);
+        self.add_byte(b4);
+    }
+
+    fn collect(mut self) -> Vec<u8> {
+        let rest = self.buffer_byte;
+        self.bytes.push(rest);
+        self.bytes.push(self.bit_pos as u8);
+        self.bytes
+    }
+}
+
+#[derive(Debug)]
+struct Tree {
+    root_node: Node,
+    lookup_table: Vec<Vec<bool>>,
+}
+
+impl Tree {
+    fn new(root_node: Node) -> Self {
+        let mut lookup_table = vec![vec![]; 256];
+        Tree::fill_lookup_table(&root_node, &mut lookup_table, Vec::new());
+        Self { root_node, lookup_table }
+    }
+
+    fn fill_lookup_table(node: &Node, lookup_table: &mut Vec<Vec<bool>>, progress: Vec<bool>) {
+        if let Some(val) = node.value {
+            lookup_table[val as usize] = progress.clone();
+        } else {
+            if let Some(l_node) = &node.left {
+                let mut l_progress = progress.clone();
+                l_progress.push(false);
+                Tree::fill_lookup_table(&Rc::clone(l_node).as_ref().borrow(), lookup_table, l_progress);
+            }
+            if let Some(r_node) = &node.right {
+                let mut r_progress = progress.clone();
+                r_progress.push(true);
+                Tree::fill_lookup_table(&Rc::clone(r_node).as_ref().borrow(), lookup_table, r_progress)
+            }
+        }     
+    }
+
+    fn get_encoded_bit_array_from_byte(&self, index: u8) -> &Vec<bool> {
+        &self.lookup_table[index as usize]
+    }
+
+
+    fn get_decode_bytes(&self, encoded_bytes: &Vec<u8>, start: usize) -> Vec<u8> {
+        let mut buff = Vec::new();
+        let mut res = Vec::new();
+        let last_active_bits = encoded_bytes.last().unwrap();
+        let stop =  ((encoded_bytes.len() - 1) * 8) - (7  - last_active_bits.to_owned() as usize);
+        
+        for i in start..stop {
+            buff.push(get_bit(encoded_bytes, i));
+
+            if self.lookup_table.contains(&buff) {
+                res.push(self.lookup_table.iter().position(|o|  o == &buff).unwrap() as u8);
+                buff.clear();
+            }
+        }
+        res
+    }
+
+}
+
+fn get_bit(bytes: &Vec<u8>, index: usize) -> bool {
+    let byte = bytes[index / 8];
+    let index = index % 8;
+    let result = byte >> (7 - index) & 1 != 0; 
+
+    result
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Node {
+    left: Option<Rc<RefCell<Node>>>,
+    right: Option<Rc<RefCell<Node>>>,
+    frequency: u32,
+    value: Option<u8>, 
+}
+
+impl Node {
+    fn new_bottom_node(frequency: u32, value: Option<u8>) -> Self{
+        Self { left: None, right: None, frequency, value }
+    }
+
+    fn new_intermidiate_node(left: Node, right: Node) -> Self {
+        let freq = left.frequency + right.frequency;
+        Self {left: Some(Rc::new(RefCell::new(left))), right: Some(Rc::new(RefCell::new(right))), frequency: freq, value: None }
+    }
+
+}
+
+impl Ord for Node{
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.frequency.cmp(&other.frequency).reverse()
+    }
+}
+
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Frequency list must be sorted 
+fn frequency_list_to_huffman_tree(frequency_list: &Vec<(u8, u32)>) -> Tree {
+    let mut heap = BinaryHeap::new();
+    frequency_list.iter().for_each(|o| {
+        heap.push(Node::new_bottom_node(o.1, Some(o.0)));
+    }); 
+
+    while heap.len() > 1 {
+        let left = heap.pop().unwrap();
+        let right = heap.pop().unwrap();
+        
+        heap.push(Node::new_intermidiate_node(left, right));
+    }
+    Tree::new(heap.pop().unwrap())
+}
+
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Please (only) path as argument");
+        std::process::exit(0)
+    }
+    let path = &args[1];
+
+    println!("Opening file...");
+    let bytes = get_file_as_bytes(path);
+    
+    println!("Encoding bytes...");
+    let lz_encoded = lz_encode(&bytes);
+    let hc_encoded = hc_encode(&lz_encoded);
+
+    println!("Writing bytes to file...");
+    write_file_as_bytes("out.bin", &hc_encoded);
+
+    println!("Decoding bytes...");
+    let hc_decoded_bytes = hc_decode(&hc_encoded);
+    let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
+
+
+    println!("Checking decoded bytes...");
+    assert_eq!(bytes.len(), lz_decoded_bytes.len());
+    for i in 0..lz_decoded_bytes.len() {
+        //println!("{}: {}-{}", i, bytes[i], lz_decoded_bytes[i]);
+        assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i);
+    }
+    println!("Successfully compressed and decompressed.");
 }
