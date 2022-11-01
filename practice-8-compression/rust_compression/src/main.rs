@@ -6,10 +6,10 @@ use std::env;
 use std::fs::File;
 use std::rc::Rc;
 
-const INDICATOR_BYTE: usize = 4;
-static SEARCH_WINDOW_BITS: u8 = 15; // 11 for backref: 2^15 = 32768
-static LOOK_AHEAD_BITS: u8 = 9; // 5 for looka ahead: 2^9 = 512
-static DISTANCE_BITS: u8 = 8; // 8 for distance unitl next : 2^8 = 256
+const INDICATOR_BYTE: usize = 5;
+static SEARCH_WINDOW_BITS: u8 = 16; // 18 for backref: 2^18 = 524288
+static LOOK_AHEAD_BITS: u8 = 11; // 12 for looka ahead: 2^12 = 4096
+static DISTANCE_BITS: u8 = 11; // 8 for distance unitl next : 2^10 = 1024
 
 /// Tree struct for holding the huffman tree, using lookuptables to increase performace.
 #[derive(Debug)]
@@ -149,7 +149,7 @@ impl BitBuilder {
 
 
 fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; INDICATOR_BYTE] {
-    let mut num: u32 = 0x00;
+    let mut num: u64 = 0x00;
     
     assert!(distance_to_next < 2_u32.pow(DISTANCE_BITS as u32));
     assert!(length < 2_u32.pow(LOOK_AHEAD_BITS as u32));
@@ -158,23 +158,26 @@ fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) ->
         println!("{}", length);
     }
 
-    num |= distance_to_next; 
-    num |= length << DISTANCE_BITS;   
-    num |= back_ref << (DISTANCE_BITS + LOOK_AHEAD_BITS);
+    num |= distance_to_next as u64; 
+    num |= (length as u64) << DISTANCE_BITS;   
+    num |= (back_ref as u64) << (DISTANCE_BITS + LOOK_AHEAD_BITS);
 
-    let b1: u8 = ((num >> 24) & 0xff) as u8;
-    let b2: u8 = ((num >> 16) & 0xff) as u8;
-    let b3: u8 = ((num >> 8) & 0xff) as u8;
-    let b4: u8 = (num & 0xff) as u8;
-    [b1, b2, b3, b4]
+    let b1: u8 = ((num >> 32) & 0xff) as u8;
+    let b2: u8 = ((num >> 24) & 0xff) as u8;
+    let b3: u8 = ((num >> 16) & 0xff) as u8;
+    let b4: u8 = ((num >> 8) & 0xff) as u8;
+    let b5: u8 = (num & 0xff) as u8;
+    [b1, b2, b3, b4, b5]
 }
 
 fn get_data_from_indicator(indicator: &[u8; INDICATOR_BYTE]) -> (usize , usize, usize){
     let mut num: usize = 0;
-    num |= indicator[3] as usize;
-    num |= (indicator[2] as usize) << 8;
-    num |= (indicator[1] as usize) << 16;
-    num |= (indicator[0] as usize) << 24;
+    num |= indicator[4] as usize;
+    num |= (indicator[3] as usize) << 8;
+    num |= (indicator[2] as usize) << 16;
+    num |= (indicator[1] as usize) << 24;
+    num |= (indicator[0] as usize) << 32;
+
 
 
     let distance_to_next = num & (2_usize.pow(DISTANCE_BITS as u32) - 1);
@@ -256,7 +259,7 @@ fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
         let output_end_pointer = output.len(); 
 
         // Fetching indicator
-        let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3]];
+        let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3], bytes[bytes_end_pointer+4]];
         let (back_ref, length, distance_to_next) = get_data_from_indicator(&indicator);
         
         // Coping data
@@ -430,9 +433,10 @@ fn frequency_list_to_huffman_tree(frequency_list: &[(u8, u32)]) -> Tree {
 
 
 fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
-        println!("Please write as <flag> <path> path as argument");
+        println!("Please write <flag> <path> as argument");
         std::process::exit(0)
     }
     let flag = &args[1];
