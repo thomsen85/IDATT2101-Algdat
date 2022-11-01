@@ -82,7 +82,6 @@ impl Node {
         let freq = left.frequency + right.frequency;
         Self {left: Some(Rc::new(RefCell::new(left))), right: Some(Rc::new(RefCell::new(right))), frequency: freq, value: None }
     }
-
 }
 
 impl Ord for Node{
@@ -211,11 +210,11 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
     let mut prev_length = 0; 
 
     while split < bytes.len() {
-        if split % 500 == 0{
+        if split % 50 == 0{
             print!("\r {:.2}%", (split as f64/bytes.len() as f64) * 100.0)
         }
         let (back_ref, length) = find_match_in_window(bytes, split, SEARCH_WINDOW_BITS, LOOK_AHEAD_BITS);
-        if length > 4 {
+        if length > INDICATOR_BYTE.try_into().unwrap() || distance >= 2_u32.pow(DISTANCE_BITS.into()) - 1 {
             if first {
                 output.extend(get_byte_array_from_u16(split as u16));
                 first = false; 
@@ -432,33 +431,52 @@ fn frequency_list_to_huffman_tree(frequency_list: &[(u8, u32)]) -> Tree {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Please (only) path as argument");
+    if args.len() != 3 {
+        println!("Please write as <flag> <path> path as argument");
         std::process::exit(0)
     }
-    let path = &args[1];
+    let flag = &args[1];
+    let path = &args[2];
 
-    println!("Opening file...");
-    let bytes = get_file_as_bytes(path);
+    if flag == "-c" {
+        println!("Opening file...");
+        let bytes = get_file_as_bytes(path);
+        
+        println!("Encoding bytes...");
+        let lz_encoded = lz_encode(&bytes);
+        let hc_encoded = hc_encode(&lz_encoded);
     
-    println!("Encoding bytes...");
-    let lz_encoded = lz_encode(&bytes);
-    let hc_encoded = hc_encode(&lz_encoded);
+        println!("Writing bytes to file...");
+        if write_file_as_bytes(&(path.to_owned() + ".cpr"), &hc_encoded).is_err() {
+            println!("Error writing to file");
+        }
+        println!("Lempel ziv is {:.2} % of original size", (lz_encoded.len() as f64 / bytes.len() as f64) * 100.0);
+        println!("Compressed file is {:.2} % of original size", (hc_encoded.len() as f64 / bytes.len() as f64) * 100.0);
+    } else if flag == "-d" {
+        println!("Opening file...");
+        let bytes = get_file_as_bytes(path);
 
-    println!("Writing bytes to file...");
-    if write_file_as_bytes("out.bin", &hc_encoded).is_err() {
-        println!("Error writing to file");
+        println!("Decoding bytes...");
+        let hc_decoded_bytes = hc_decode(&bytes);
+        let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
+
+        println!("Writing bytes to file...");
+        if write_file_as_bytes(&(path.to_owned() + ".ucpr"), &lz_decoded_bytes).is_err() {
+            println!("Error writing to file");
+        }
+    } else {
+        println!("Please use valid flag -c for compressing or -d for decompressing")
     }
 
-    println!("Decoding bytes...");
-    let hc_decoded_bytes = hc_decode(&hc_encoded);
-    let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
+        
+    // println!("Checking decoded bytes...");
+    // assert_eq!(bytes.len(), lz_decoded_bytes.len());
+    // for i in 0..lz_decoded_bytes.len() {
+    //     assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i);
+    // }
+    // println!("Successfully compressed and decompressed.");
+
+    
 
 
-    println!("Checking decoded bytes...");
-    assert_eq!(bytes.len(), lz_decoded_bytes.len());
-    for i in 0..lz_decoded_bytes.len() {
-        assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i);
-    }
-    println!("Successfully compressed and decompressed.");
 }
