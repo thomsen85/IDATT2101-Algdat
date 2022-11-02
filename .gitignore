@@ -9,6 +9,8 @@ venv/
 *.pdf
 *.lyx
 *.bin
+*.cpr
+*.ucpr
 # Big files
 vg1
 vg2

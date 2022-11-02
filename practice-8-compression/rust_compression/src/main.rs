@@ -6,10 +6,10 @@ use std::env;
 use std::fs::File;
 use std::rc::Rc;
 
-const INDICATOR_BYTE: usize = 4;
-static SEARCH_WINDOW_BITS: u8 = 15; // 11 for backref: 2^15 = 32768
-static LOOK_AHEAD_BITS: u8 = 9; // 5 for looka ahead: 2^9 = 512
-static DISTANCE_BITS: u8 = 8; // 8 for distance unitl next : 2^8 = 256
+const INDICATOR_BYTE: usize = 5;
+static SEARCH_WINDOW_BITS: u8 = 18; // 18 for backref: 2^18 = 262144
+static LOOK_AHEAD_BITS: u8 = 12; // 12 for looka ahead: 2^12 = 4096
+static DISTANCE_BITS: u8 = 10; // 10 for distance unitl next : 2^10 = 1024
 
 /// Tree struct for holding the huffman tree, using lookuptables to increase performace.
 #[derive(Debug)]
@@ -50,7 +50,7 @@ impl Tree {
         let mut buff = Vec::new();
         let mut res = Vec::new();
         let last_active_bits = encoded_bytes.last().unwrap();
-        let stop =  ((encoded_bytes.len() - 1) * 8) - (7  - last_active_bits.to_owned() as usize);
+        let stop =  ((encoded_bytes.len() - 1) * 8) - (8  - last_active_bits.to_owned() as usize);
         
         for i in start..stop {
             buff.push(get_bit(encoded_bytes, i));
@@ -149,32 +149,31 @@ impl BitBuilder {
 
 
 fn get_indicator_from_data(back_ref: u32, length: u32, distance_to_next: u32) -> [u8; INDICATOR_BYTE] {
-    let mut num: u32 = 0x00;
+    let mut num: u64 = 0x00;
     
-    assert!(distance_to_next < 2_u32.pow(DISTANCE_BITS as u32));
-    assert!(length < 2_u32.pow(LOOK_AHEAD_BITS as u32));
-    assert!(back_ref < 2_u32.pow(SEARCH_WINDOW_BITS as u32), "backref = {}",  back_ref);
-    if length > 2_u32.pow(LOOK_AHEAD_BITS as u32) {
-        println!("{}", length);
-    }
+    assert!(distance_to_next < 2_u32.pow(DISTANCE_BITS as u32) );
+    assert!(length < 2_u32.pow(LOOK_AHEAD_BITS as u32) );
+    assert!(back_ref < 2_u32.pow(SEARCH_WINDOW_BITS as u32) , "backref = {}",  back_ref);
 
-    num |= distance_to_next; 
-    num |= length << DISTANCE_BITS;   
-    num |= back_ref << (DISTANCE_BITS + LOOK_AHEAD_BITS);
+    num |= distance_to_next as u64; 
+    num |= (length as u64) << DISTANCE_BITS;   
+    num |= (back_ref as u64) << (DISTANCE_BITS + LOOK_AHEAD_BITS);
 
-    let b1: u8 = ((num >> 24) & 0xff) as u8;
-    let b2: u8 = ((num >> 16) & 0xff) as u8;
-    let b3: u8 = ((num >> 8) & 0xff) as u8;
-    let b4: u8 = (num & 0xff) as u8;
-    [b1, b2, b3, b4]
+    let b1: u8 = ((num >> 32) & 0xff) as u8;
+    let b2: u8 = ((num >> 24) & 0xff) as u8;
+    let b3: u8 = ((num >> 16) & 0xff) as u8;
+    let b4: u8 = ((num >> 8) & 0xff) as u8;
+    let b5: u8 = (num & 0xff) as u8;
+    [b1, b2, b3, b4, b5]
 }
 
 fn get_data_from_indicator(indicator: &[u8; INDICATOR_BYTE]) -> (usize , usize, usize){
     let mut num: usize = 0;
-    num |= indicator[3] as usize;
-    num |= (indicator[2] as usize) << 8;
-    num |= (indicator[1] as usize) << 16;
-    num |= (indicator[0] as usize) << 24;
+    num |= indicator[4] as usize;
+    num |= (indicator[3] as usize) << 8;
+    num |= (indicator[2] as usize) << 16;
+    num |= (indicator[1] as usize) << 24;
+    num |= (indicator[0] as usize) << 32;
 
 
     let distance_to_next = num & (2_usize.pow(DISTANCE_BITS as u32) - 1);
@@ -207,11 +206,15 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
     let mut first = true; 
 
     let mut prev_pointer: usize = 0;
-    let mut prev_length = 0; 
+    let mut prev_length = 0;
+
+    let mut output_counter = 0;
 
     while split < bytes.len() {
-        if split % 50 == 0{
-            print!("\r {:.2}%", (split as f64/bytes.len() as f64) * 100.0)
+        if output_counter > 1000 {
+            print!("\r {:.2}%", (split as f64/bytes.len() as f64) * 100.0);
+            io::stdout().flush().unwrap();
+            output_counter = 0;
         }
         let (back_ref, length) = find_match_in_window(bytes, split, SEARCH_WINDOW_BITS, LOOK_AHEAD_BITS);
         if length > INDICATOR_BYTE.try_into().unwrap() || distance >= 2_u32.pow(DISTANCE_BITS.into()) - 1 {
@@ -233,13 +236,12 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
         split += 1;
         distance += 1;
         buffer_end = split;
+        output_counter += 1;
     }
-    println!("\r100.00%");
-
     let indicator = get_indicator_from_data(prev_pointer as u32, prev_length, distance);
     output.extend(indicator);
-        
-    output.extend(&bytes[buffer_start..buffer_end]); 
+    output.extend(&bytes[buffer_start..bytes.len()]); 
+    println!("\r100.00%");
 
     output
 }
@@ -256,17 +258,21 @@ fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
         let output_end_pointer = output.len(); 
 
         // Fetching indicator
-        let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3]];
+        let indicator: [u8;  INDICATOR_BYTE] = [bytes[bytes_end_pointer], bytes[bytes_end_pointer+1], bytes[bytes_end_pointer+2], bytes[bytes_end_pointer+3], bytes[bytes_end_pointer+4]];
         let (back_ref, length, distance_to_next) = get_data_from_indicator(&indicator);
         
         // Coping data
         output.extend_from_within((output_end_pointer - back_ref)..(output_end_pointer + length - back_ref ));
 
-        start_pointer = bytes_end_pointer + 4;
+        start_pointer = bytes_end_pointer + INDICATOR_BYTE;
         bytes_end_pointer = start_pointer + distance_to_next;
     }
-    output.extend(&bytes[start_pointer..bytes_end_pointer]);
+
+    if start_pointer < bytes.len() {
+        output.extend(&bytes[start_pointer..bytes.len()]);
+    }
     output
+
 }
 
 /// Finds matches in search window 
@@ -307,10 +313,10 @@ fn find_match_in_window(bytes:&Vec<u8>, split: usize, search_window_bits: u8, lo
             if temp_longest_match_len >= 2_u32.pow(look_ahead_bits as u32) - 1{
                 break
             }
-            if look_ahead_pointer >= bytes.len() {
+            if look_ahead_pointer >= bytes.len() - 1 {
                 break;
             }
-        }
+        }   
 
         if temp_longest_match_len > longest_match_len {
             longest_match_len = temp_longest_match_len;
@@ -323,11 +329,12 @@ fn find_match_in_window(bytes:&Vec<u8>, split: usize, search_window_bits: u8, lo
         temp_longest_match_pointer = split;
 
         if search_pointer <= search_pointer_end {
-            break
+            break   
         }
         search_pointer -= 1;
     }
 
+    assert!(split + longest_match_len as usize <= bytes.len());
     (split - longest_match_pointer, longest_match_len)
 
 }
@@ -430,9 +437,10 @@ fn frequency_list_to_huffman_tree(frequency_list: &[(u8, u32)]) -> Tree {
 
 
 fn main() {
+    env::set_var("RUST_BACKTRACE", "1");
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
-        println!("Please write as <flag> <path> path as argument");
+        println!("Please write <flag> <path> as argument");
         std::process::exit(0)
     }
     let flag = &args[1];
@@ -455,7 +463,7 @@ fn main() {
     } else if flag == "-d" {
         println!("Opening file...");
         let bytes = get_file_as_bytes(path);
-
+            
         println!("Decoding bytes...");
         let hc_decoded_bytes = hc_decode(&bytes);
         let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
@@ -464,19 +472,28 @@ fn main() {
         if write_file_as_bytes(&(path.to_owned() + ".ucpr"), &lz_decoded_bytes).is_err() {
             println!("Error writing to file");
         }
-    } else {
-        println!("Please use valid flag -c for compressing or -d for decompressing")
-    }
-
+    }else if flag == "--cdc" {
+        println!("Opening file...");
+        let bytes = get_file_as_bytes(path);
         
-    // println!("Checking decoded bytes...");
-    // assert_eq!(bytes.len(), lz_decoded_bytes.len());
-    // for i in 0..lz_decoded_bytes.len() {
-    //     assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i);
-    // }
-    // println!("Successfully compressed and decompressed.");
-
+        println!("Encoding bytes...");
+        let lz_encoded = lz_encode(&bytes);
+        let hc_encoded = hc_encode(&lz_encoded);
     
+        println!("Decoding bytes...");
+        let hc_decoded_bytes = hc_decode(&hc_encoded);
+        let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
 
+        println!("Checking decoded bytes...");
 
+        println!("{}", lz_decoded_bytes.len());
+        assert_eq!(bytes.len(), lz_decoded_bytes.len(), "Length of original and decompreseed are not equal, original was {}, and decompressed was {}", bytes.len(), lz_decoded_bytes.len());
+        for i in 0..lz_decoded_bytes.len() {
+            assert_eq!(bytes[i], lz_decoded_bytes[i], "Wrong at index {}", i); 
+        }
+        println!("Successfully compressed and decompressed.");
+
+    } else {
+        println!("Please use valid flag -c for compressing or -d for decompressing, --cdc for compressing decompressions and checking result")
+    }
 }
