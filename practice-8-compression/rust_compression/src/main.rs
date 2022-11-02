@@ -7,9 +7,9 @@ use std::fs::File;
 use std::rc::Rc;
 
 const INDICATOR_BYTE: usize = 5;
-static SEARCH_WINDOW_BITS: u8 = 18; // 16 for backref: 2^16 = 65536
+static SEARCH_WINDOW_BITS: u8 = 18; // 18 for backref: 2^18 = 262144
 static LOOK_AHEAD_BITS: u8 = 12; // 12 for looka ahead: 2^12 = 4096
-static DISTANCE_BITS: u8 = 10; // 8 for distance unitl next : 2^10 = 1024
+static DISTANCE_BITS: u8 = 10; // 10 for distance unitl next : 2^10 = 1024
 
 /// Tree struct for holding the huffman tree, using lookuptables to increase performace.
 #[derive(Debug)]
@@ -268,7 +268,7 @@ fn lz_decode(bytes: &Vec<u8>) ->Vec<u8> {
         bytes_end_pointer = start_pointer + distance_to_next;
     }
 
-    if start_pointer <= bytes.len() - 1 {
+    if start_pointer < bytes.len() {
         output.extend(&bytes[start_pointer..bytes.len()]);
     }
     output
