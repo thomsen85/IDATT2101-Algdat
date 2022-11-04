@@ -12,6 +12,7 @@ static LOOK_AHEAD_BITS: u8 = 12; // 12 for looka ahead: 2^12 = 4096
 static DISTANCE_BITS: u8 = 10; // 10 for distance unitl next : 2^10 = 1024
 
 /// Tree struct for holding the huffman tree, using lookuptables to increase performace.
+#[allow(dead_code)]
 #[derive(Debug)]
 struct Tree {
     root_node: Node,
@@ -217,7 +218,7 @@ fn lz_encode(bytes: &Vec<u8>) -> Vec<u8> {
             output_counter = 0;
         }
         let (back_ref, length) = find_match_in_window(bytes, split, SEARCH_WINDOW_BITS, LOOK_AHEAD_BITS);
-        if length > INDICATOR_BYTE.try_into().unwrap() || distance >= 2_u32.pow(DISTANCE_BITS.into()) - 1 {
+        if length > INDICATOR_BYTE as u32 || distance >= 2_u32.pow(DISTANCE_BITS.into()) - 1 {
             if first {
                 output.extend(get_byte_array_from_u16(split as u16));
                 first = false; 
@@ -447,32 +448,33 @@ fn main() {
     let path = &args[2];
 
     if flag == "-c" {
-        println!("Opening file...");
+        println!("Opening file {}", path);
         let bytes = get_file_as_bytes(path);
         
         println!("Encoding bytes...");
         let lz_encoded = lz_encode(&bytes);
         let hc_encoded = hc_encode(&lz_encoded);
     
-        println!("Writing bytes to file...");
-        if write_file_as_bytes(&(path.to_owned() + ".cpr"), &hc_encoded).is_err() {
+        let cpr_path = &(path.to_owned() + ".cpr");
+        println!("Writing compressed file to {}", cpr_path);
+        if write_file_as_bytes(cpr_path, &hc_encoded).is_err() {
             println!("Error writing to file");
         }
-        println!("Lempel ziv is {:.2} % of original size", (lz_encoded.len() as f64 / bytes.len() as f64) * 100.0);
         println!("Compressed file is {:.2} % of original size", (hc_encoded.len() as f64 / bytes.len() as f64) * 100.0);
     } else if flag == "-d" {
-        println!("Opening file...");
+        println!("Opening file {}", path);
         let bytes = get_file_as_bytes(path);
             
         println!("Decoding bytes...");
         let hc_decoded_bytes = hc_decode(&bytes);
         let lz_decoded_bytes = lz_decode(&hc_decoded_bytes);
 
-        println!("Writing bytes to file...");
-        if write_file_as_bytes(&(path.to_owned() + ".ucpr"), &lz_decoded_bytes).is_err() {
+        let dcpr_path = &(path.to_owned() + ".dcpr");
+        println!("Writing decompressed files to {}", dcpr_path);
+        if write_file_as_bytes(dcpr_path, &lz_decoded_bytes).is_err() {
             println!("Error writing to file");
         }
-    }else if flag == "--cdc" {
+    } else if flag == "--cdc" {
         println!("Opening file...");
         let bytes = get_file_as_bytes(path);
         
