@@ -6,10 +6,12 @@ use std::env;
 use std::fs::File;
 use std::rc::Rc;
 
-const INDICATOR_BYTE: usize = 5;
-static SEARCH_WINDOW_BITS: u8 = 18; // 18 for backref: 2^18 = 262144
-static LOOK_AHEAD_BITS: u8 = 12; // 12 for looka ahead: 2^12 = 4096
-static DISTANCE_BITS: u8 = 10; // 10 for distance unitl next : 2^10 = 1024
+const LEVELS: [(u8, u8, u8)] = [(0, 0, 0,),
+                                ()]
+// const INDICATOR_BYTE: usize = 5;
+// static SEARCH_WINDOW_BITS: u8 = 18; // 18 for backref: 2^18 = 262144
+// static LOOK_AHEAD_BITS: u8 = 12; // 12 for looka ahead: 2^12 = 4096
+// static DISTANCE_BITS: u8 = 10; // 10 for distance unitl next : 2^10 = 1024
 
 /// Tree struct for holding the huffman tree, using lookuptables to increase performace.
 #[allow(dead_code)]
