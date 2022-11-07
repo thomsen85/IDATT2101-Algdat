@@ -11,6 +11,7 @@ venv/
 *.bin
 *.cpr
 *.ucpr
+*.gqz
 # Big files
 vg1
 vg2
