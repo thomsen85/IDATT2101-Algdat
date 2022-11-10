@@ -356,6 +356,12 @@ fn write_file_as_bytes(path: &str, bytes: &[u8]) -> io::Result<usize>{
     writer.write(bytes)
 }
 
+fn write_file_as_bytes(path: &str, bytes: &[u8]) -> io::Result<usize>{
+    let file = File::create(path).expect("File could not be created");
+    let mut writer = BufWriter::new(file);
+    writer.write(bytes)
+}
+
 fn hc_encode(bytes: &Vec<u8>) -> Vec<u8>{
     let mut frequency_list: Vec<u32> = vec![0_u32; u8::MAX as usize + 1];
     bytes.iter().for_each(|byte| {

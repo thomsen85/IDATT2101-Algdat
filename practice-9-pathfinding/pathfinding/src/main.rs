@@ -1,13 +1,10 @@
-#![allow(dead_code)]
+use core::panic;
 use std::cmp::{Ord, Ordering};
 use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
-use std::{io, result};
-use std::io::{BufRead, BufReader, Write};
-use std::string::ParseError;
+use std::io;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::time::Instant;
-use std::env;
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EdgeTo {
@@ -19,53 +16,99 @@ struct EdgeTo {
 
 impl EdgeTo {
     fn new(to: u32, drive_time: u32, length: u32, speed_limit: u16) -> Self {
-        Self { to, drive_time, length, speed_limit }
+        Self {
+            to,
+            drive_time,
+            length,
+            speed_limit,
+        }
     }
 }
-
+#[derive(Clone)]
 struct Node {
     id: u32,
     latitude: f64,
     longitude: f64,
-} 
+}
 
 impl Node {
     fn new(id: u32, latitude: f64, longitude: f64) -> Self {
-        Self { id, latitude, longitude }
+        Self {
+            id,
+            latitude,
+            longitude,
+        }
     }
 }
 
+struct Waypoint {
+    source: u32,
+    distances_to: Vec<u32>,
+    distances_from: Vec<u32>,
+}
+
+impl Waypoint {
+    fn new(source: u32, distances_to: Vec<u32>, distances_from: Vec<u32>) -> Self {
+        Self {
+            source,
+            distances_to,
+            distances_from,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct Map {
     nodes: Vec<Node>,
     edges: Vec<Vec<EdgeTo>>,
     points_of_interest: HashMap<u32, (u8, String)>,
-
 }
 
 impl Map {
     fn new() -> Self {
-        Self { nodes: Vec::new(), edges: Vec::new(), points_of_interest: HashMap::new()}
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            points_of_interest: HashMap::new(),
+        }
     }
 
-    fn from_nodes_edges_and_poi(nodes: Vec<Node>, edges: Vec<Vec<EdgeTo>>, points_of_interest: HashMap<u32, (u8, String)> ) -> Self {
-        Self { nodes, edges, points_of_interest}
-    }
-
-    fn get_distance_between_nodes_in_meters(&self, from: usize, to: usize) -> usize {
-        let a = self.get_coordinates_from_node(from);
-        let b = self.get_coordinates_from_node(to);
-
-        (((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt() * 111_139.0) as usize
+    fn from_nodes_edges_and_poi(
+        nodes: Vec<Node>,
+        edges: Vec<Vec<EdgeTo>>,
+        points_of_interest: HashMap<u32, (u8, String)>,
+    ) -> Self {
+        Self {
+            nodes,
+            edges,
+            points_of_interest,
+        }
     }
 
     fn get_coordinates_from_node(&self, node: usize) -> (f64, f64) {
         let n = &self.nodes[node];
         (n.latitude, n.longitude)
     }
+
+    fn get_reverse_copy(&self) -> Self {
+        let mut edges = vec![Vec::new(); self.edges.len()];
+        for i in 0..self.edges.len() {
+            for edge in &self.edges[i] {
+                edges[edge.to as usize].push(EdgeTo::new(
+                    i as u32,
+                    edge.drive_time,
+                    edge.length,
+                    edge.speed_limit,
+                ));
+            }
+        }
+
+        Map::from_nodes_edges_and_poi(self.nodes.clone(), edges, self.points_of_interest.clone())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Priority<'a, T>{
+struct Priority<'a, T> {
     number: usize,
     edges: &'a Vec<EdgeTo>,
     cost: T,
@@ -93,7 +136,88 @@ impl<T: Ord> PartialOrd for Priority<'_, T> {
     }
 }
 
-fn a_star(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>, Vec<u32>) {
+fn get_waypoint_cost(source: usize, goal: usize, waypoints: &Vec<Waypoint>) -> u32 {
+    let mut diffs = Vec::new();
+    for waypoint in waypoints {
+        let diff1: u32 = {
+            if waypoint.distances_to[source] > waypoint.distances_to[goal] {
+                0
+            } else {
+                waypoint.distances_to[goal] - waypoint.distances_to[source]
+            }
+        };
+        diffs.push(diff1);
+
+        let diff2: u32 = {
+            if waypoint.distances_from[goal] > waypoint.distances_from[source] {
+                0
+            } else {
+                waypoint.distances_from[source] - waypoint.distances_from[goal]
+            }
+        };
+        diffs.push(diff2);
+    }
+    diffs.into_iter().max().expect("No waypoints found")
+}
+
+fn alt(
+    map: &Map,
+    waypoints: &Vec<Waypoint>,
+    source: usize,
+    goal: usize,
+) -> (usize, Vec<u32>, Vec<u32>) {
+    // Init variables
+    let length = map.edges.len();
+    let mut shortest_distances = vec![usize::MAX / 2; length];
+    let mut previous: Vec<Option<usize>> = vec![None; length];
+    let mut priority_queue: BinaryHeap<Priority<usize>> = BinaryHeap::new();
+    shortest_distances[source] = 0;
+
+    // Push source variable
+    priority_queue.push(Priority::new(source, 0, &map.edges[source]));
+    let mut visited = Vec::new();
+    while let Some(priority) = priority_queue.pop() {
+        visited.push(priority.number as u32);
+        if priority.number == goal {
+            break;
+        }
+        for neighbour in priority.edges {
+            let alt = shortest_distances[priority.number] + neighbour.drive_time as usize;
+            if alt < shortest_distances[neighbour.to as usize] {
+                shortest_distances[neighbour.to as usize] = alt;
+                previous[neighbour.to as usize] = Some(priority.number);
+                let cost = get_waypoint_cost(neighbour.to as usize, goal, waypoints) as usize + alt;
+                priority_queue.push(Priority::new(
+                    neighbour.to as usize,
+                    cost,
+                    &map.edges[neighbour.to as usize],
+                ));
+            }
+            // println!("\n\n###################\n{:?}", priority_queue.iter()
+            // .map(|l|  (map.get_coordinates_from_node(l.number), centi_seconds_to_time_format(l.cost)))
+            // .collect::<Vec<((f64, f64), String)>>());
+        }
+    }
+
+    let mut path = Vec::new();
+    let mut prev = goal;
+    loop {
+        path.push(prev as u32);
+        if let Some(p) = previous[prev] {
+            prev = p;
+        } else {
+            panic!("Something went wrong with finding path");
+        }
+        if prev == source {
+            break;
+        }
+    }
+    path.reverse();
+
+    (shortest_distances[goal], path, visited)
+}
+
+fn closest_dijkstra(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>, Vec<u32>) {
     // Init variables
     let length = map.edges.len();
     let mut shortest_distances = vec![usize::MAX / 2; length];
@@ -103,7 +227,7 @@ fn a_star(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>, Vec<u32>) {
 
     // Push source variable
     priority_queue.push(Priority::new(from, 0, &map.edges[from]));
-    let mut visited = Vec::new(); 
+    let mut visited = Vec::new();
     while let Some(priority) = priority_queue.pop() {
         visited.push(priority.number as u32);
         if priority.number == to {
@@ -112,52 +236,13 @@ fn a_star(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>, Vec<u32>) {
         for neighbour in priority.edges {
             let alt = shortest_distances[priority.number] + neighbour.drive_time as usize;
             if alt < shortest_distances[neighbour.to as usize] {
-                shortest_distances[neighbour.to as usize] = alt;    
-                previous[neighbour.to as usize] = Some(priority.number);
-                let cost = map.get_distance_between_nodes_in_meters(neighbour.to as usize, to) + alt / 2;
-                priority_queue.push(Priority::new(neighbour.to as usize, cost, &map.edges[neighbour.to as usize]));
-            }
-        }
-    }
-
-    let mut path = Vec::new();
-    let mut prev = to;
-    loop {
-        path.push(prev as u32);
-        if let Some(p) = previous[prev] {
-            prev = p;
-        } else {
-            panic!("Something went wrong with finding path");
-        } if prev == from {
-            break
-        }
-    }
-    path.reverse();
-    
-    (shortest_distances[to], path, visited)
-}
-
-fn closest_dijkstra(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>) {
-    // Init variables
-    let length = map.edges.len();
-    let mut shortest_distances = vec![usize::MAX / 2; length];
-    let mut previous: Vec<Option<usize>> = vec![None; length];
-    let mut priority_queue: BinaryHeap<Priority<usize>> = BinaryHeap::new();
-    shortest_distances[from] = 0;
-
-    // Push source variable
-    priority_queue.push(Priority::new(from, 0, &map.edges[from]));
-
-    while let Some(priority) = priority_queue.pop() {
-        if priority.number == to {
-            break; 
-        }
-        for neighbour in priority.edges {
-            let alt = shortest_distances[priority.number] + neighbour.drive_time as usize;
-            if alt < shortest_distances[neighbour.to as usize] {
                 shortest_distances[neighbour.to as usize] = alt;
                 previous[neighbour.to as usize] = Some(priority.number);
-                priority_queue.push(Priority::new(neighbour.to as usize, alt, &map.edges[neighbour.to as usize]));
+                priority_queue.push(Priority::new(
+                    neighbour.to as usize,
+                    alt,
+                    &map.edges[neighbour.to as usize],
+                ));
             }
         }
     }
@@ -172,12 +257,12 @@ fn closest_dijkstra(map: &Map, from: usize, to: usize) -> (usize, Vec<u32>) {
             panic!("Something went wrong with finding path");
         }
         if prev == from {
-            break
+            break;
         }
     }
     path.reverse();
-    
-    (shortest_distances[to], path)
+
+    (shortest_distances[to], path, visited)
 }
 
 fn category_based_dijkstra(map: &Map, source: usize, category: u8, amount: u32) -> Vec<u32> {
@@ -192,45 +277,58 @@ fn category_based_dijkstra(map: &Map, source: usize, category: u8, amount: u32) 
     // Push source variable
     priority_queue.push(Priority::new(source, 0, &map.edges[source]));
 
-    while let Some(priority) = priority_queue.pop(){
-        if let Some(poi) =  map.points_of_interest.get(&(priority.number as u32)) {
+    while let Some(priority) = priority_queue.pop() {
+        if let Some(poi) = map.points_of_interest.get(&(priority.number as u32)) {
             if poi.0 & category == category {
                 results.push(priority.number as u32)
             }
         }
         if results.len() >= amount as usize {
-            break
+            break;
         }
         for neighbour in priority.edges {
             let alt = shortest_distances[priority.number] + neighbour.drive_time as usize;
             if alt < shortest_distances[neighbour.to as usize] {
                 shortest_distances[neighbour.to as usize] = alt;
                 previous[neighbour.to as usize] = Some(priority.number);
-                priority_queue.push(Priority::new(neighbour.to as usize, alt, &map.edges[neighbour.to as usize]));
+                priority_queue.push(Priority::new(
+                    neighbour.to as usize,
+                    alt,
+                    &map.edges[neighbour.to as usize],
+                ));
             }
         }
     }
     results
 }
 
-fn full_dijkstra(map: &Map, source: usize) -> (Vec<usize>, Vec<Option<usize>>) {
+/// Returns: (shotests distances, previous)
+fn full_dijkstra(map: &Map, source: u32) -> (Vec<u32>, Vec<Option<usize>>) {
     // Init variables
     let length = map.edges.len();
-    let mut shortest_distances = vec![usize::MAX / 2; length];
+    let mut shortest_distances = vec![u32::MAX / 2; length];
     let mut previous: Vec<Option<usize>> = vec![None; length];
-    let mut priority_queue: BinaryHeap<Priority<usize>> = BinaryHeap::new();
-    shortest_distances[source] = 0;
+    let mut priority_queue: BinaryHeap<Priority<u32>> = BinaryHeap::new();
+    shortest_distances[source as usize] = 0;
 
     // Push source variable
-    priority_queue.push(Priority::new(source, 0, &map.edges[source]));
+    priority_queue.push(Priority::new(
+        source as usize,
+        0,
+        &map.edges[source as usize],
+    ));
 
     while let Some(priority) = priority_queue.pop() {
         for neighbour in priority.edges {
-            let alt = shortest_distances[priority.number] + neighbour.drive_time as usize;
+            let alt = shortest_distances[priority.number] + neighbour.drive_time;
             if alt < shortest_distances[neighbour.to as usize] {
                 shortest_distances[neighbour.to as usize] = alt;
                 previous[neighbour.to as usize] = Some(priority.number);
-                priority_queue.push(Priority::new(neighbour.to as usize, alt, &map.edges[neighbour.to as usize]));
+                priority_queue.push(Priority::new(
+                    neighbour.to as usize,
+                    alt,
+                    &map.edges[neighbour.to as usize],
+                ));
             }
         }
     }
@@ -238,16 +336,20 @@ fn full_dijkstra(map: &Map, source: usize) -> (Vec<usize>, Vec<Option<usize>>) {
 }
 
 fn node_from_string(l: Vec<&str>) -> Node {
-    Node::new(l[0].parse().expect("Could not parse to node"), 
-        l[1].parse().expect("Could not parse to node"), 
-        l[2].parse().expect("Could not parse to node"))
+    Node::new(
+        l[0].parse().expect("Could not parse to node"),
+        l[1].parse().expect("Could not parse to node"),
+        l[2].parse().expect("Could not parse to node"),
+    )
 }
 
 fn edge_from_string(l: Vec<&str>) -> EdgeTo {
-    EdgeTo::new(l[1].parse().expect("Could not parse to node"), 
-    l[2].parse().expect("Could not parse to node"), 
-    l[3].parse().expect("Could not parse to node"), 
-    l[4].parse().expect("Could not parse to node"))
+    EdgeTo::new(
+        l[1].parse().expect("Could not parse to node"),
+        l[2].parse().expect("Could not parse to node"),
+        l[3].parse().expect("Could not parse to node"),
+        l[4].parse().expect("Could not parse to node"),
+    )
 }
 
 fn get_map_from_paths(node_path: &str, edge_path: &str, poi_path: &str) -> io::Result<Map> {
@@ -258,23 +360,35 @@ fn get_map_from_paths(node_path: &str, edge_path: &str, poi_path: &str) -> io::R
     let mut node_reader = BufReader::new(node_file);
     let mut node_first_line = String::new();
     node_reader.read_line(&mut node_first_line)?;
-    let node_lines: usize = node_first_line.trim().parse().expect("Could not parse First line");
+    let node_lines: usize = node_first_line
+        .trim()
+        .parse()
+        .expect("Could not parse First line");
     let nodes: Vec<Node> = node_reader
         .lines()
         .into_iter()
-        .map(|line| node_from_string(line.expect("Failed to read line").split_whitespace().collect()))
+        .map(|line| {
+            node_from_string(
+                line.expect("Failed to read line")
+                    .split_whitespace()
+                    .collect(),
+            )
+        })
         .collect();
-    
+
     assert_eq!(nodes.len(), node_lines);
-    
+
     let mut edge_reader = BufReader::new(edge_file);
     let mut edge_first_line = String::new();
     edge_reader.read_line(&mut edge_first_line)?;
-    let edges_len : usize = edge_first_line.trim().parse().expect("Could not parse First line");
+    let edges_len: usize = edge_first_line
+        .trim()
+        .parse()
+        .expect("Could not parse First line");
     let mut edges = vec![Vec::new(); edges_len];
 
     for line in edge_reader.lines() {
-        let line= line.expect("Could not parse line");
+        let line = line.expect("Could not parse line");
         let l: Vec<&str> = line.split_whitespace().collect();
         edges[l[0].parse::<usize>().unwrap()].push(edge_from_string(l));
     }
@@ -284,135 +398,333 @@ fn get_map_from_paths(node_path: &str, edge_path: &str, poi_path: &str) -> io::R
     let mut poi_reader = BufReader::new(poi_file);
     let mut poi_first_line = String::new();
     poi_reader.read_line(&mut poi_first_line)?;
-    let poi_len : usize = poi_first_line.trim().parse().expect("Could not parse First line");
+    let poi_len: usize = poi_first_line
+        .trim()
+        .parse()
+        .expect("Could not parse First line");
 
     let mut poi: HashMap<u32, (u8, String)> = HashMap::with_capacity(poi_len);
     for line in poi_reader.lines() {
-        let line= line.expect("Could not parse line");
+        let line = line.expect("Could not parse line");
         let l: Vec<&str> = line.split("\t").collect();
-        poi.insert(l[0].parse().expect("Could not parse line"), 
-        (l[1].parse().expect("Could not parse line"),
-        l[2][1..(l[2].len()-1)].to_string()));
+        poi.insert(
+            l[0].parse().expect("Could not parse line"),
+            (
+                l[1].parse().expect("Could not parse line"),
+                l[2][1..(l[2].len() - 1)].to_string(),
+            ),
+        );
     }
     Ok(Map::from_nodes_edges_and_poi(nodes, edges, poi))
 }
 
-
-fn travel_path_to_csv(travel_path: Vec<(f64, f64)>, file_path: &str) -> io::Result<()>{
+fn travel_path_to_csv(travel_path: Vec<(f64, f64)>, file_path: &str) -> io::Result<()> {
     let mut file = File::create(file_path)?;
     file.write("Latitude,Longitude\n".as_bytes())?;
     for p in travel_path {
         file.write(format!("{},{}\n", p.0, p.1).as_bytes())?;
     }
-
     Ok(())
 }
 
 fn centi_seconds_to_time_format(centi_seconds: usize) -> String {
     let seconds = centi_seconds / 100;
 
-    let mut str = format!("{} second{}.", seconds % 60, if seconds != 1 {"s"} else {""}).to_string();
+    let mut str = format!(
+        "{} second{}.",
+        seconds % 60,
+        if seconds != 1 { "s" } else { "" }
+    );
+
     if seconds < 60 {
         return str;
     }
 
     let minutes = seconds / 60;
-    str = format!("{} minute{} and ", minutes % 60, if minutes != 1 {"s"} else {""}).to_string() + &str;
+    str = format!(
+        "{} minute{} and ",
+        minutes % 60,
+        if minutes != 1 { "s" } else { "" }
+    )
+        + &str;
     if minutes < 60 {
         return str;
     }
 
     let hours = minutes / 60;
-    str = format!("{} hour{}, ", hours % 24, if hours != 1 {"s"} else {""}).to_string() + &str;
+    str = format!("{} hour{}, ", hours % 24, if hours != 1 { "s" } else { "" }) + &str;
     if hours < 24 {
         return str;
     }
 
     let days = hours / 24;
-    str = format!("{} day{}, ", days, if days != 1 {"s"} else {""}).to_string() + &str;
+    str = format!("{} day{}, ", days, if days != 1 { "s" } else { "" }) + &str;
 
     str
-
 }
 
-fn test_djikstra_shortest_path(map: Map) {
-    // (100591, (32, "Tower Suites Reykjavík")) 
-    // (99741, (32, "The Potato Storage"))
-    let (shortest_time, path) = closest_dijkstra(&map, 100591, 99741);
-    println!("Djikstra done, shortest path = {:?}", centi_seconds_to_time_format(shortest_time));
-    println!("Writing to csv");
-    let coordinates = path.iter()
-        .map(|p| {
-            let p = &map.nodes[p.clone() as usize];
-            (p.latitude, p.longitude)
-        })
-        .collect();
-    let _ = travel_path_to_csv(coordinates, "path.csv");
+fn get_file_as_bytes(path: &str) -> io::Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    reader.read_to_end(&mut buffer)?;
+    Ok(buffer)
 }
 
-fn test_category_find(map: &Map) {
-    // Hemsedal 3509663
-    // 1 Stedsnavn
-    // 2 Bensinstasjon
-    // 4 Ladestasjon 
-    // 8 Spisested
-    // 16 Drikkested
-    // 32 Overnattingssted 
-
-    let result = category_based_dijkstra(map, 3509663, 1, 8);
-    let refined_result: Vec<String> = result.iter()
-        .map(|id| map.points_of_interest.get(id).unwrap().1.clone())
-        .collect();
-    println!("Finding 8 closest foodplaces to hemsedal: \n{:?}", refined_result);
+fn write_file_as_bytes(path: &str, bytes: &[u8]) -> io::Result<usize> {
+    let file = File::create(path).expect("File could not be created");
+    let mut writer = BufWriter::new(file);
+    writer.write(bytes)
 }
 
-fn test_a_star(map: &Map) {
-    // Hemsedal 3509663
-    //2826143	1	"Mjølkeråen"
-    //2977813	1	"Gol"
-    //4467988	1	"Hønefoss"
-    //2587604	1	"Stjørdal"
-    //2507642	1	"Steinkjer"
+fn get_u32_from_byte_array(bytes: &[u8]) -> u32 {
+    assert_eq!(bytes.len(), 4);
+    let mut num = 0;
 
+    num |= bytes[3] as u32;
+    num |= (bytes[2] as u32) << 8;
+    num |= (bytes[1] as u32) << 16;
+    num |= (bytes[0] as u32) << 24;
 
+    num
+}
 
-    let (distance, path, visited) = a_star(map, 3509663, 2826143); 
-    travel_path_to_csv(visited.iter().map(|l| map.get_coordinates_from_node(l.clone() as usize)).collect(), "visited.csv").expect("Coud not write to visited");
-    travel_path_to_csv(path.iter().map(|l| map.get_coordinates_from_node(l.clone() as usize)).collect(), "path.csv").expect("Coud not write to visited");
-    println!("Time: {}", centi_seconds_to_time_format(distance));
+fn get_byte_array_from_u32(input: u32) -> [u8; 4] {
+    let b1: u8 = ((input >> 24) & 0xff) as u8;
+    let b2: u8 = ((input >> 16) & 0xff) as u8;
+    let b3: u8 = ((input >> 8) & 0xff) as u8;
+    let b4: u8 = (input & 0xff) as u8;
+    [b1, b2, b3, b4]
+}
 
+fn create_waypoints(map: &Map, sources: &Vec<u32>) {
+    let mut bytes: Vec<u8> = Vec::new();
+    for source in sources {
+        println!("Calculating for source: {}", source);
+        bytes.extend(get_byte_array_from_u32(source.to_owned()));
+
+        // To
+        let (dijk_distances_to, _) = full_dijkstra(map, source.to_owned());
+        bytes.extend(get_byte_array_from_u32(dijk_distances_to.len() as u32));
+
+        for dist in dijk_distances_to {
+            bytes.extend(get_byte_array_from_u32(dist as u32))
+        }
+
+        // From
+        let (dijk_distances_from, _) = full_dijkstra(&map.get_reverse_copy(), source.to_owned());
+        bytes.extend(get_byte_array_from_u32(dijk_distances_from.len() as u32));
+
+        for dist in dijk_distances_from {
+            bytes.extend(get_byte_array_from_u32(dist as u32))
+        }
+    }
+
+    println!("Done creating waypoints");
+
+    if write_file_as_bytes("waypoints.bin", &bytes).is_ok() {
+        println!("Waypoints succsessfully written to file \"waypoints.bin\"");
+    } else {
+        println!("Waypoints could not be written to file \"waypoints.bin\"");
+    }
+}
+
+fn get_waypoints_from_bytes(bytes: &Vec<u8>) -> Vec<Waypoint> {
+    let mut pointer: usize = 0;
+    let mut res: Vec<Waypoint> = Vec::new();
+    loop {
+        if pointer >= bytes.len() {
+            break;
+        }
+        let mut distances_to = Vec::new();
+        let mut distances_from = Vec::new();
+
+        let source = get_u32_from_byte_array(&bytes[pointer..pointer + 4]);
+        pointer += 4;
+        let length_to = get_u32_from_byte_array(&bytes[pointer..pointer + 4]);
+        pointer += 4;
+
+        for _ in 0..length_to {
+            distances_to.push(get_u32_from_byte_array(&bytes[pointer..pointer + 4]));
+            pointer += 4
+        }
+        let length_from = get_u32_from_byte_array(&bytes[pointer..pointer + 4]);
+
+        pointer += 4;
+        for _ in 0..length_from {
+            distances_from.push(get_u32_from_byte_array(&bytes[pointer..pointer + 4]));
+            pointer += 4
+        }
+
+        res.push(Waypoint::new(source, distances_to, distances_from));
+    }
+    res
+}
+
+fn get_waypoints(map: &Map) -> Vec<Waypoint> {
+    // 5697698	8	"Bergen Pizza"
+    // 7283163	8	"Pizzabakeren Alta"
+    // 1906903	8	"Kungsan Pizzeria"
+    // 493001	8	"Pizzeria Roihu"
+
+    let path = "waypoints.bin";
+    let sources = vec![5697698, 7283163, 1906903, 493001];
+    if let Ok(bytes) = get_file_as_bytes(path) {
+        return get_waypoints_from_bytes(&bytes);
+    } else {
+        create_waypoints(map, &sources)
+    }
+
+    if let Ok(bytes) = get_file_as_bytes(path) {
+        get_waypoints_from_bytes(&bytes)
+    } else {
+        panic!("File could not be read after creation");
+    }
+}
+
+fn compare_alt_and_dijkstras(map: &Map, waypoints: &Vec<Waypoint>, from: u32, to: u32) {
+    println!(
+        "\nTesting Dijkstras: From {}, To {}",
+        map.points_of_interest
+            .get(&from)
+            .get_or_insert(&(0_u8, "Custom".to_owned()))
+            .1,
+        map.points_of_interest
+            .get(&to)
+            .get_or_insert(&(0_u8, "Custom".to_owned()))
+            .1
+    );
+    let timer_dijkstras = Instant::now();
+    let (time_distance, path, visited) = closest_dijkstra(map, from as usize, to as usize);
+    let time_taken = timer_dijkstras.elapsed().as_millis();
+    println!(
+        "Djikstras took {} seconds, and visited {} nodes. Estimated travel time is: {}",
+        time_taken as f64 / 1000.0,
+        format_number(visited.len() as isize),
+        centi_seconds_to_time_format(time_distance)
+    );
+    travel_path_to_csv(
+        path.into_iter()
+            .map(|n| map.get_coordinates_from_node(n as usize))
+            .collect(),
+        &format!("djikstra_path_{}_{}.csv", from, to),
+    )
+    .expect("Could not write result to file");
+
+    println!(
+        "\nTesting ALT: From {}, To {}",
+        map.points_of_interest
+            .get(&from)
+            .get_or_insert(&(0_u8, "Custom".to_owned()))
+            .1,
+        map.points_of_interest
+            .get(&to)
+            .get_or_insert(&(0_u8, "Custom".to_owned()))
+            .1
+    );
+    let timer_alt = Instant::now();
+    let (time_distance, path, visited) = alt(map, waypoints, from as usize, to as usize);
+    let time_taken = timer_alt.elapsed().as_millis();
+    println!(
+        "Alt took {} seconds, and visited {} nodes. Estimated travel time is: {}",
+        time_taken as f64 / 1000.0,
+        format_number(visited.len() as isize),
+        centi_seconds_to_time_format(time_distance)
+    );
+    travel_path_to_csv(
+        path.into_iter()
+            .map(|n| map.get_coordinates_from_node(n as usize))
+            .collect(),
+        &format!("alt_path_{}_{}.csv", from, to),
+    )
+    .expect("Could not write result to file");
+}
+
+fn format_number(number: isize) -> String {
+    let mut str = Vec::new();
+    let mut copy = Clone::clone(&number);
+
+    while copy > 1000 {
+        str.push((copy % 1000).to_string());
+        copy /= 1000;
+    }
+    str.push((copy % 1000).to_string());
+
+    str.into_iter().rev().collect::<Vec<String>>().join(" ")
+}
+
+fn find_closest_information(map: &Map) {
+    const TRONDHEIM_LUFTHAVN: usize = 7172108;
+    const TRONDHEIM_TORG: usize = 4546048;
+    const HEMSEDAL: usize = 3509663;
+    const AMOUNT_OF_RESULTS: u32 = 8;
+
+    const CHARGING_STATION: u8 = 4;
+    const PLACE_TO_EAT: u8 = 8;
+    const PLACE_TO_DRINK: u8 = 16;
+
+    println!(
+        "\nFinding {} closest charging stations near Trondheim lufthavn:",
+        AMOUNT_OF_RESULTS
+    );
+    let results =
+        category_based_dijkstra(map, TRONDHEIM_LUFTHAVN, CHARGING_STATION, AMOUNT_OF_RESULTS);
+    for result in results {
+        println!(
+            "{} - {:?}",
+            map.points_of_interest[&result].1,
+            map.get_coordinates_from_node(result as usize)
+        );
+    }
+
+    println!(
+        "\nFinding {} closest places to drink near Trondheim torg:",
+        AMOUNT_OF_RESULTS
+    );
+    let results = category_based_dijkstra(map, TRONDHEIM_TORG, PLACE_TO_DRINK, AMOUNT_OF_RESULTS);
+    for result in results {
+        println!(
+            "{} - {:?}",
+            map.points_of_interest[&result].1,
+            map.get_coordinates_from_node(result as usize)
+        );
+    }
+
+    println!(
+        "\nFinding {} closest places to eat in Hemsedal:",
+        AMOUNT_OF_RESULTS
+    );
+    let results = category_based_dijkstra(map, HEMSEDAL, PLACE_TO_EAT, AMOUNT_OF_RESULTS);
+    for result in results {
+        println!(
+            "{} - {:?}",
+            map.points_of_interest[&result].1,
+            map.get_coordinates_from_node(result as usize)
+        );
+    }
 }
 
 fn main() {
-    println!("Loading Files ...");
-    //let map = get_map_from_paths("island_noder.txt", "island_kanter.txt", "island_interessepkt.txt").expect("Could Not load map");
-    let map = get_map_from_paths("norden_noder.txt", "norden_kanter.txt", "norden_interessepkt.txt").expect("Could Not load map");
-    println!("Done loading files.");
+    println!("Loading map ...");
+    let map = get_map_from_paths(
+        "norden_noder.txt",
+        "norden_kanter.txt",
+        "norden_interessepkt.txt",
+    )
+    .expect("Could Not load map");
+    println!("Done loading map.");
 
-    
-    //test_category_find(&map);
-    test_a_star(&map); 
+    println!("Loading waypoints ...");
+    let waypoints = get_waypoints(&map);
+    println!("Done loading waypoints.");
 
-    // loop {
-    //     let mut input_string = String::new();
-    //     print!("Search: ");
-    //     let _ = std::io::stdout().flush();
-    //     std::io::stdin().read_line(&mut input_string)
-    //         .ok()
-    //         .expect("Failed to read line");
+    const KÅRVÅG: u32 = 3292784;
+    const GJEMNES: u32 = 7352330;
 
-    //     if input_string == "q" {
-    //         break
-    //     }
+    const TAMPERE: u32 = 232073;
+    const ÅLESUND: u32 = 2518780;
 
-    //     if let Ok(num) = input_string.trim().parse::<u8>() {
-    //         println!("Searching for {} in list", num);
-    //         let res: Vec<(&u32, &(u8, String))> = map.points_of_interest.iter()
-    //             .filter(|(_, v)| v.0 == num)
-    //             .collect();
-
-    //         println!("{:?}", res);
-    //     }
-    // }
+    compare_alt_and_dijkstras(&map, &waypoints, KÅRVÅG, GJEMNES);
+    compare_alt_and_dijkstras(&map, &waypoints, TAMPERE, ÅLESUND);
+    find_closest_information(&map);
 }
-
