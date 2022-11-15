@@ -1,4 +1,3 @@
-use core::panic;
 use std::cmp::{Ord, Ordering};
 use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
@@ -24,6 +23,7 @@ impl EdgeTo {
         }
     }
 }
+
 #[derive(Clone)]
 struct Node {
     id: u32,
@@ -102,8 +102,14 @@ impl Map {
                 ));
             }
         }
-
         Map::from_nodes_edges_and_poi(self.nodes.clone(), edges, self.points_of_interest.clone())
+    }
+
+    fn get_name(&self, node_id: u32) -> String{
+        self.points_of_interest
+        .get(&node_id)
+        .get_or_insert(&(0_u8, "Custom Waypoint".to_owned()))
+        .1.to_owned()
     }
 }
 
@@ -279,7 +285,7 @@ fn category_based_dijkstra(map: &Map, source: usize, category: u8, amount: u32) 
 
     while let Some(priority) = priority_queue.pop() {
         if let Some(poi) = map.points_of_interest.get(&(priority.number as u32)) {
-            if poi.0 & category == category {
+            if poi.0 & category == category && !results.contains(&(priority.number as u32)) {
                 results.push(priority.number as u32)
             }
         }
@@ -583,17 +589,10 @@ fn get_waypoints(map: &Map) -> Vec<Waypoint> {
 }
 
 fn compare_alt_and_dijkstras(map: &Map, waypoints: &Vec<Waypoint>, from: u32, to: u32) {
-    println!(
-        "\nTesting Dijkstras: From {}, To {}",
-        map.points_of_interest
-            .get(&from)
-            .get_or_insert(&(0_u8, "Custom".to_owned()))
-            .1,
-        map.points_of_interest
-            .get(&to)
-            .get_or_insert(&(0_u8, "Custom".to_owned()))
-            .1
-    );
+    let from_name = map.get_name(from);
+    let to_name = map.get_name(to);
+
+    println!("\nTesting Dijkstras: From {}, To {}", from_name, to_name);
     let timer_dijkstras = Instant::now();
     let (time_distance, path, visited) = closest_dijkstra(map, from as usize, to as usize);
     let time_taken = timer_dijkstras.elapsed().as_millis();
@@ -607,21 +606,11 @@ fn compare_alt_and_dijkstras(map: &Map, waypoints: &Vec<Waypoint>, from: u32, to
         path.into_iter()
             .map(|n| map.get_coordinates_from_node(n as usize))
             .collect(),
-        &format!("djikstra_path_{}_{}.csv", from, to),
+        &format!("djikstra_path_{}_{}.csv", from_name, to_name),
     )
     .expect("Could not write result to file");
 
-    println!(
-        "\nTesting ALT: From {}, To {}",
-        map.points_of_interest
-            .get(&from)
-            .get_or_insert(&(0_u8, "Custom".to_owned()))
-            .1,
-        map.points_of_interest
-            .get(&to)
-            .get_or_insert(&(0_u8, "Custom".to_owned()))
-            .1
-    );
+    println!("\nTesting ALT: From {}, To {}", from_name, to_name);
     let timer_alt = Instant::now();
     let (time_distance, path, visited) = alt(map, waypoints, from as usize, to as usize);
     let time_taken = timer_alt.elapsed().as_millis();
@@ -635,7 +624,7 @@ fn compare_alt_and_dijkstras(map: &Map, waypoints: &Vec<Waypoint>, from: u32, to
         path.into_iter()
             .map(|n| map.get_coordinates_from_node(n as usize))
             .collect(),
-        &format!("alt_path_{}_{}.csv", from, to),
+        &format!("alt_path_{}_{}.csv", from_name, to_name),
     )
     .expect("Could not write result to file");
 }
@@ -669,39 +658,62 @@ fn find_closest_information(map: &Map) {
     );
     let results =
         category_based_dijkstra(map, TRONDHEIM_LUFTHAVN, CHARGING_STATION, AMOUNT_OF_RESULTS);
-    for result in results {
+    for result in &results {
         println!(
             "{} - {:?}",
             map.points_of_interest[&result].1,
-            map.get_coordinates_from_node(result as usize)
+            map.get_coordinates_from_node(result.to_owned() as usize)
         );
     }
+    travel_path_to_csv(
+        results.into_iter()
+            .map(|n| map.get_coordinates_from_node(n as usize))
+            .collect(),
+        &format!("{}_closest_charging_to_{}.csv", AMOUNT_OF_RESULTS, map.get_name(TRONDHEIM_LUFTHAVN as u32)),
+    )
+    .expect("Could not write result to file");
 
     println!(
         "\nFinding {} closest places to drink near Trondheim torg:",
         AMOUNT_OF_RESULTS
     );
     let results = category_based_dijkstra(map, TRONDHEIM_TORG, PLACE_TO_DRINK, AMOUNT_OF_RESULTS);
-    for result in results {
+    for result in &results {
         println!(
             "{} - {:?}",
             map.points_of_interest[&result].1,
-            map.get_coordinates_from_node(result as usize)
+            map.get_coordinates_from_node(result.to_owned() as usize)
         );
     }
+    travel_path_to_csv(
+        results.into_iter()
+            .map(|n| map.get_coordinates_from_node(n as usize))
+            .collect(),
+        &format!("{}_closest_drinking_to_{}.csv", AMOUNT_OF_RESULTS, map.get_name(TRONDHEIM_TORG as u32)),
+    )
+    .expect("Could not write result to file");
+
 
     println!(
         "\nFinding {} closest places to eat in Hemsedal:",
         AMOUNT_OF_RESULTS
     );
     let results = category_based_dijkstra(map, HEMSEDAL, PLACE_TO_EAT, AMOUNT_OF_RESULTS);
-    for result in results {
+    for result in &results {
         println!(
             "{} - {:?}",
             map.points_of_interest[&result].1,
-            map.get_coordinates_from_node(result as usize)
+            map.get_coordinates_from_node(result.to_owned() as usize)
         );
     }
+    travel_path_to_csv(
+        results.into_iter()
+            .map(|n| map.get_coordinates_from_node(n as usize))
+            .collect(),
+        &format!("{}_closest_eating_to_{}.csv", AMOUNT_OF_RESULTS, map.get_name(HEMSEDAL as u32)),
+    )
+    .expect("Could not write result to file");
+
 }
 
 fn main() {
