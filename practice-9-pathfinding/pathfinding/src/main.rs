@@ -727,7 +727,10 @@ fn main() {
     println!("Done loading map.");
 
     println!("Loading waypoints ...");
+    let waypoint_timer = Instant::now();
     let waypoints = get_waypoints(&map);
+    let waypoint_time = waypoint_timer.elapsed().as_millis() as f64 / 1000.0;
+    println!("Creating waypoints took {} seconds", waypoint_time);
     println!("Done loading waypoints.");
 
     const KÅRVÅG: u32 = 3292784;
