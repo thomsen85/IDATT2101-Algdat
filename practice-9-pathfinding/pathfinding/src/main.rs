@@ -1,8 +1,9 @@
 use std::cmp::{Ord, Ordering};
 use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
-use std::io;
+use std::{io, thread};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::thread::Thread;
 use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -504,35 +505,44 @@ fn get_byte_array_from_u32(input: u32) -> [u8; 4] {
 }
 
 fn create_waypoints(map: &Map, sources: &Vec<u32>) {
-    let mut bytes: Vec<u8> = Vec::new();
+    let mut handels = Vec::new();
     for source in sources {
-        println!("Calculating for source: {}", source);
-        bytes.extend(get_byte_array_from_u32(source.to_owned()));
+        let map_copy = map.clone();
+        let source_copy = source.clone();
+        handels.push(thread::spawn(move || {
+            let mut bytes: Vec<u8> = Vec::new();
+            println!("Calculating for source: {}", source_copy);
+            bytes.extend(get_byte_array_from_u32(source_copy.to_owned()));
+    
+            // To
+            let (dijk_distances_to, _) = full_dijkstra(&map_copy, source_copy.to_owned());
+            bytes.extend(get_byte_array_from_u32(dijk_distances_to.len() as u32));
+    
+            for dist in dijk_distances_to {
+                bytes.extend(get_byte_array_from_u32(dist as u32))
+            }
+    
+            // From
+            let (dijk_distances_from, _) = full_dijkstra(&map_copy.get_reverse_copy(), source_copy.to_owned());
+            bytes.extend(get_byte_array_from_u32(dijk_distances_from.len() as u32));
+    
+            for dist in dijk_distances_from {
+                bytes.extend(get_byte_array_from_u32(dist as u32))
+            }
+            println!("Done creating waypoints");
 
-        // To
-        let (dijk_distances_to, _) = full_dijkstra(map, source.to_owned());
-        bytes.extend(get_byte_array_from_u32(dijk_distances_to.len() as u32));
-
-        for dist in dijk_distances_to {
-            bytes.extend(get_byte_array_from_u32(dist as u32))
-        }
-
-        // From
-        let (dijk_distances_from, _) = full_dijkstra(&map.get_reverse_copy(), source.to_owned());
-        bytes.extend(get_byte_array_from_u32(dijk_distances_from.len() as u32));
-
-        for dist in dijk_distances_from {
-            bytes.extend(get_byte_array_from_u32(dist as u32))
-        }
+            if write_file_as_bytes("waypoints.bin", &bytes).is_ok() {
+                println!("Waypoints succsessfully written to file \"waypoints.bin\"");
+            } else {
+                println!("Waypoints could not be written to file \"waypoints.bin\"");
+            }
+        }));
     }
 
-    println!("Done creating waypoints");
-
-    if write_file_as_bytes("waypoints.bin", &bytes).is_ok() {
-        println!("Waypoints succsessfully written to file \"waypoints.bin\"");
-    } else {
-        println!("Waypoints could not be written to file \"waypoints.bin\"");
+    for handle in handels {
+        handle.join().expect("Couldn't join on the associated thread");
     }
+
 }
 
 fn get_waypoints_from_bytes(bytes: &Vec<u8>) -> Vec<Waypoint> {
@@ -727,7 +737,9 @@ fn main() {
     println!("Done loading map.");
 
     println!("Loading waypoints ...");
+    let waypoint_timer = Instant::now();
     let waypoints = get_waypoints(&map);
+
     println!("Done loading waypoints.");
 
     const KÅRVÅG: u32 = 3292784;
@@ -736,7 +748,11 @@ fn main() {
     const TAMPERE: u32 = 232073;
     const ÅLESUND: u32 = 2518780;
 
+
     compare_alt_and_dijkstras(&map, &waypoints, KÅRVÅG, GJEMNES);
     compare_alt_and_dijkstras(&map, &waypoints, TAMPERE, ÅLESUND);
     find_closest_information(&map);
 }
+
+
+
